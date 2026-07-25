@@ -1,8 +1,16 @@
-# 四层待办 Obsidian 插件
+# Four Layer Todo
 
-这是四层待办工具的首个本地插件版本。插件会在 Obsidian 主工作区打开完整页面，不使用狭窄侧栏。
+Four Layer Todo is a local-first task workspace for Obsidian. It keeps active
+work on a whiteboard while moving less immediate items through a workbench,
+task pools, and long-term objects. The plugin does not send task content to a
+network service.
 
-## 当前功能
+## 中文说明
+
+中文名为“四层待办”。这是四层待办工具的首个本地插件版本。插件会在
+Obsidian 主工作区打开完整页面，不使用狭窄侧栏。
+
+## 功能
 
 - 白板与背面缓存工作台。
 - 收集箱、待办列表、缓存列表。
