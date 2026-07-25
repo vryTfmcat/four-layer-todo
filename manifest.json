@@ -1,9 +1,9 @@
 {
   "id": "four-layer-todo",
   "name": "Four Layer Todo",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "minAppVersion": "1.6.0",
-  "description": "以白板为中心，在缓存工作台、任务存储器和外围长期对象之间管理注意力。",
+  "description": "A whiteboard-centered workspace for managing attention across workbenches, task storage, and long-term objects.",
   "author": "vryTfmcat",
   "authorUrl": "https://github.com/vryTfmcat",
   "isDesktopOnly": false
