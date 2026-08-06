@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5
+
+- Use the plugin stylesheet instead of injecting styles at runtime.
+- Preserve user-arranged workspace leaves when the plugin unloads.
+- Publish the required Obsidian release assets individually.
+
 ## 0.1.4 - 2026-08-06
 
 - Restore Markdown-to-plugin synchronization during startup before writing
