@@ -9,7 +9,6 @@ import {
   type WorkspaceState,
   type WorkspaceStorage,
 } from "./ui/TodoWorkspace";
-import rawStyles from "./ui/globals.css";
 import todoIconDataUrl from "../assets/todo-icon.png";
 import {
   ItemView,
@@ -792,20 +791,9 @@ class FourLayerTodoView extends ItemView {
     try {
       this.contentEl.empty();
       this.contentEl.addClass("four-layer-todo-plugin");
-      const host = this.contentEl.createDiv({ cls: "four-layer-todo-root" });
-      const shadow = host.attachShadow({ mode: "open" });
-
-      const style = document.createElement("style");
-      style.textContent = rawStyles.replace(":root", ":host");
-      shadow.appendChild(style);
-
-      const reset = document.createElement("style");
-      reset.textContent = `:host{display:block;height:100%;min-height:0;color:#1d2622;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}.four-layer-todo-mount{height:100%;min-height:0}`;
-      shadow.prepend(reset);
-
-      const mount = document.createElement("div");
-      mount.className = "four-layer-todo-mount";
-      shadow.appendChild(mount);
+      const mount = this.contentEl.createDiv({
+        cls: "four-layer-todo-root four-layer-todo-mount",
+      });
       this.root = createRoot(mount);
       this.root.render(
         <TodoWorkspace
@@ -839,7 +827,9 @@ class FourLayerTodoSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Markdown 内容同步" });
+    new Setting(containerEl)
+      .setName("Markdown 内容同步")
+      .setHeading();
 
     new Setting(containerEl)
       .setName("将内容同步为 Markdown")
@@ -1041,7 +1031,6 @@ export default class FourLayerTodoPlugin extends Plugin {
 
   onunload(): void {
     console.log("四层待办: onunload");
-    this.app.workspace.detachLeavesOfType(VIEW_TYPE);
   }
 
   getIconResourcePath(): string {
