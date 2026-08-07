@@ -1,58 +1,81 @@
-# Four Layer Todo
+# Four Layer Todo for Obsidian
 
-Four Layer Todo is a local-first task workspace for Obsidian. It keeps active
-work on a whiteboard while moving less immediate items through a workbench,
-task pools, and long-term objects. The plugin does not send task content to a
-network service.
+[中文说明](README.zh.md)
 
-## 中文说明
+Four-Layer Todo is a local-first task workspace for Obsidian. It keeps the
+current task in a whiteboard while moving less immediate work through a
+workbench, task pools, and long-term objects.
 
-中文名为“四层待办”。这是四层待办工具的首个本地插件版本。插件会在
-Obsidian 主工作区打开完整页面，不使用狭窄侧栏。
+## Demo Video
 
-## 演示视频
+[Watch the subtitled Four Layer Todo demo](发布素材/演示视频/Four-Layer-Todo-Demo-Subtitled.mp4)
 
-[播放带中文字幕的四层待办演示](发布素材/演示视频/Four-Layer-Todo-Demo-Subtitled.mp4)
+## Features
 
-## 功能
+- A whiteboard for the one to three tasks currently in focus.
+- A reversible workbench with an inbox, to-do list, and cache list.
+- Expandable Kanban-style task pools.
+- Long-term objects with related tasks.
+- Task connections, text notes, card movement, archiving, deletion, and
+  completion.
+- Optional Markdown synchronization with bidirectional edits in the vault.
+- Links to notes outside the task folder without moving the original file.
+- Import and export through Obsidian's official Canvas format.
 
-- 白板与背面缓存工作台。
-- 收集箱、待办列表、缓存列表。
-- 任务卡片三点菜单，以及“先跳转、再选择具体位置”的移动流程。
-- 可自由添加任务池，并在任务池中手动添加任务。
-- Task List Kanban 风格任务存储器。
-- 长期对象与关联任务查看。
-- AI 按钮仅保留接口位置，不发送任何数据。
-- 当前状态保存在插件自己的 `data.json` 中，每个 Vault 单独持久化。
-- 可选 Markdown 同步：将每张待办卡保存为 Vault 内可读、可编辑的 `.md` 文件。
+The plugin is local-first. It does not send task content to a network service.
+The AI buttons are interface placeholders only.
 
-## 构建
+## Interface Languages
+
+Four Layer Todo includes complete English and Chinese interfaces. By default,
+the plugin follows Obsidian's language. You can also choose **Automatic**,
+**English**, or **Chinese** under **Settings → Community plugins → Four Layer
+Todo**.
+
+Changing the interface language never renames existing notes, task folders, or
+frontmatter values. This keeps existing Chinese vaults compatible while making
+the full interface usable for English-speaking users. New sample content is
+created in the active interface language.
+
+## Install From Source
 
 ```bash
 npm install
 npm run build
 ```
 
-## 安装到当前库
+To install the development build into the current vault:
 
 ```bash
 npm run install:local
 ```
 
-安装后在 Obsidian 的社区插件设置中启用“四层待办”，点击左侧功能区图标，或运行命令“打开四层待办”。
+Then enable **Four-Layer Todo** in Obsidian's Community Plugins settings and
+run **Open Four-Layer Todo** from the command palette.
 
-## Markdown 待办同步
+## Markdown Synchronization
 
-在 Obsidian 的“四层待办”插件设置中启用“将待办同步为 Markdown”，并填写待办笔记文件夹名称。默认文件夹名为 `待办`，开关默认关闭。
+Enable Markdown synchronization in the plugin settings and set the task-notes
+folder. The default folder is `待办` ("Todo") for compatibility with existing
+vaults, and synchronization is disabled by default. You can choose any root
+folder name before enabling synchronization.
 
-- 启用或点击“同步现有待办”后，当前每张待办卡都会成为一个 `.md` 文件。
-- Markdown 文件名对应待办名称，正文对应待办详情；插件不会在正文中重复写入一级标题。在 Obsidian 中编辑或重命名文件后会回写插件界面。
-- `任务存储器/`下的一级子文件夹就是任务池；在 Obsidian 中新建、重命名或移除空任务池，以及把任务文件移到另一个池，都会反向同步到插件界面。
-- frontmatter 保留卡片 ID、所在区域、优先级、白板位置等同步信息；需要保留以维持双向同步。
-- 删除已同步的 `.md` 文件会删除对应待办卡；重命名文件不会影响关联。
-- 任务菜单的“删除”会移除卡片，并将对应 Markdown 文件移入 Obsidian 垃圾篓。
+- Each regular task and long-term object is stored as an Obsidian-readable
+  Markdown file.
+- File names provide the visible task title; no duplicate H1 is written into
+  the note body.
+- Frontmatter keeps the card ID, location, priority, whiteboard position, and
+  other metadata required for bidirectional synchronization.
+- Moving or renaming a managed note updates its task card.
+- Each direct child folder under `任务存储器/` is a task pool. Creating,
+  renaming, or removing an empty pool folder, and moving a task note between
+  pool folders, updates the plugin UI.
+- Deleting a managed note removes its task card.
+- Linking a note inside the task folder moves it to the selected task area.
+  Linking a note outside the task folder creates a backlink-style task card and
+  leaves the original file in place.
 
-同步文件夹的结构如下：
+The synchronized folder layout is:
 
 ```text
 待办/
@@ -62,8 +85,23 @@ npm run install:local
 │   ├── 待办列表/
 │   └── 缓存列表/
 ├── 任务存储器/
-│   └── 对应任务池/
+│   └── <task-pool>/
 ├── 归档/
 │   └── YYYY-MM-DD/
 └── 长期对象/
 ```
+
+Archiving requires Markdown synchronization so that the note can be moved into
+the dated archive folder. Deleting sends the managed Markdown note to
+Obsidian's trash.
+
+## Development Checks
+
+```bash
+npm run build
+node --check main.js
+```
+
+## License
+
+[MIT](LICENSE)

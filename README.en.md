@@ -1,6 +1,6 @@
-# Four-Layer Todo for Obsidian
+# Four Layer Todo for Obsidian
 
-[中文版](README.md)
+[中文说明](README.zh.md)
 
 Four-Layer Todo is a local-first task workspace for Obsidian. It keeps the
 current task in a whiteboard while moving less immediate work through a
@@ -25,6 +25,18 @@ workbench, task pools, and long-term objects.
 The plugin is local-first. It does not send task content to a network service.
 The AI buttons are interface placeholders only.
 
+## Interface Languages
+
+Four Layer Todo includes complete English and Chinese interfaces. By default,
+the plugin follows Obsidian's language. You can also choose **Automatic**,
+**English**, or **Chinese** under **Settings → Community plugins → Four Layer
+Todo**.
+
+Changing the interface language never renames existing notes, task folders, or
+frontmatter values. This keeps existing Chinese vaults compatible while making
+the full interface usable for English-speaking users. New sample content is
+created in the active interface language.
+
 ## Install From Source
 
 ```bash
@@ -44,8 +56,9 @@ run **Open Four-Layer Todo** from the command palette.
 ## Markdown Synchronization
 
 Enable Markdown synchronization in the plugin settings and set the task-notes
-folder. The default folder is `待办` ("Todo") and synchronization is disabled
-by default.
+folder. The default folder is `待办` ("Todo") for compatibility with existing
+vaults, and synchronization is disabled by default. You can choose any root
+folder name before enabling synchronization.
 
 - Each regular task and long-term object is stored as an Obsidian-readable
   Markdown file.
