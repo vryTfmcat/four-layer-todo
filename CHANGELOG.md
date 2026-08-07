@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.8
+
+- Declare the Obsidian 1.13.0 minimum required by the settings and file APIs.
+
 ## 0.1.7
 
 - Synchronize the pnpm lockfile with the fixed Preact 10.29.8 dependency.
