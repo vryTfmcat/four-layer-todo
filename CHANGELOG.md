@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.7
+
+- Synchronize the pnpm lockfile with the fixed Preact 10.29.8 dependency.
+
 ## 0.1.6
 
 - Add a complete English interface with automatic language detection and an
