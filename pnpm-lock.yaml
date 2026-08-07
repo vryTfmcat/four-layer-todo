@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       preact:
-        specifier: ^10.27.2
+        specifier: 10.29.8
         version: 10.29.8
     devDependencies:
       '@types/node':
