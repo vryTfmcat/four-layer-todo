@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.6
+
+- Add a complete English interface with automatic language detection and an
+  explicit English/Chinese language setting.
+- Keep existing Chinese task folders, frontmatter values, and task content
+  compatible when the interface language changes.
+- Translate fresh guided sample content into the active interface language.
+- Upgrade Preact to 10.29.8 to remove the known JSON VNode injection advisory.
+- Fix the plugin view root height so the whiteboard fills the Obsidian view.
+- Use declarative settings definitions compatible with Obsidian 1.13+.
+
 ## 0.1.5
 
 - Use the plugin stylesheet instead of injecting styles at runtime.

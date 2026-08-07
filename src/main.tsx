@@ -11,16 +11,26 @@ import {
 } from "./ui/TodoWorkspace";
 import todoIconDataUrl from "../assets/todo-icon.png";
 import {
+  getLanguage,
   ItemView,
   Notice,
   normalizePath,
   Plugin,
   PluginSettingTab,
   Setting,
+  type SettingDefinitionItem,
   TFile,
   TFolder,
   WorkspaceLeaf,
 } from "obsidian";
+import {
+  resolveLocale,
+  setActiveLocale,
+  tr,
+  translateGuidedWorkspace,
+  type AppLocale,
+  type LanguageSetting,
+} from "./i18n";
 
 const VIEW_TYPE = "four-layer-todo-workspace";
 const NATIVE_CANVAS_FILE_NAME = "任务白板.canvas";
@@ -29,6 +39,7 @@ const TASK_POOL_TONES = ["green", "amber", "blue", "violet"];
 const DEFAULT_SETTINGS: FourLayerTodoSettings = {
   markdownSyncEnabled: false,
   taskNotesFolder: "待办",
+  language: "auto",
 };
 const GUIDED_SAMPLE_VERSION = 8;
 const GUIDED_CANVAS_CONNECTIONS = [
@@ -76,6 +87,7 @@ const LEGACY_SAMPLE_IDS = new Set([
 type FourLayerTodoSettings = {
   markdownSyncEnabled: boolean;
   taskNotesFolder: string;
+  language: LanguageSetting;
   resetGuidedSample?: boolean;
   guidedSampleVersion?: number;
 };
@@ -328,7 +340,7 @@ function createGuidedSampleWorkspace(): WorkspaceState {
     },
   ];
 
-  return {
+  return translateGuidedWorkspace({
     canvasCards,
     canvasConnections: clone(GUIDED_CANVAS_CONNECTIONS),
     canvasTextNotes: [
@@ -441,7 +453,7 @@ function createGuidedSampleWorkspace(): WorkspaceState {
     ],
     storeColumns,
     transparentUi: false,
-  };
+  });
 }
 
 function removeLegacySampleData(state: WorkspaceState): WorkspaceState {
@@ -621,8 +633,13 @@ function getPriority(value: unknown): TaskItem["priority"] | undefined {
 function getLongTermObjectKind(
   value: unknown,
 ): LongTermObject["kind"] | undefined {
-  return ["兴趣", "目标", "长期想法"].includes(String(value))
-    ? (value as LongTermObject["kind"])
+  const canonical = {
+    Interest: "兴趣",
+    Goal: "目标",
+    "Long-term idea": "长期想法",
+  }[String(value)] ?? String(value);
+  return ["兴趣", "目标", "长期想法"].includes(canonical)
+    ? (canonical as LongTermObject["kind"])
     : undefined;
 }
 
@@ -646,13 +663,15 @@ function parseTaskNote(content: string, fileTitle: string): MarkdownTask | null 
     legacyHeading?.[1].trim() === fileTitle
       ? body.slice(legacyHeading[0].length).trim()
       : body;
-  const source = frontmatter.source === "笔记" ? "笔记" : "文本";
+  const source = ["笔记", "Note"].includes(String(frontmatter.source))
+    ? "笔记"
+    : "文本";
 
   return {
     id,
     location,
     columnId: getString(frontmatter.columnId),
-    title: getString(frontmatter.title) ?? (fileTitle || "未命名待办"),
+    title: getString(frontmatter.title) ?? (fileTitle || tr("未命名待办")),
     detail,
     source,
     meta: getString(frontmatter.meta),
@@ -685,9 +704,9 @@ function parseLongTermObjectNote(
   return {
     id,
     kind,
-    title: fileTitle || "未命名长期对象",
-    description: description || "暂无说明。",
-    activity: getString(frontmatter.activity) ?? "等待关联任务",
+    title: fileTitle || tr("未命名长期对象"),
+    description: description || tr("暂无说明。"),
+    activity: getString(frontmatter.activity) ?? tr("等待关联任务"),
     tone: getString(frontmatter.tone) ?? defaultTone,
     relatedTaskIds: getStringArray(frontmatter.relatedTaskIds),
   };
@@ -699,7 +718,7 @@ function taskFileStem(title: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 80);
-  return stem || "未命名待办";
+  return stem || tr("未命名待办");
 }
 
 function archiveDateFolder(date = new Date()): string {
@@ -731,7 +750,7 @@ function getTaskFolder(
   if (record.location === "cache") return `${rootFolder}/缓存工作台/缓存列表`;
 
   const column = state.storeColumns.find((item) => item.id === record.columnId);
-  return `${rootFolder}/任务存储器/${taskFileStem(column?.title ?? "未分类任务池")}`;
+  return `${rootFolder}/任务存储器/${taskFileStem(column?.title ?? tr("未分类任务池"))}`;
 }
 
 function getTaskPoolTitleFromPath(
@@ -780,7 +799,7 @@ class FourLayerTodoView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "四层待办";
+    return this.plugin.t("四层待办");
   }
 
   getIcon(): string {
@@ -795,6 +814,7 @@ class FourLayerTodoView extends ItemView {
         cls: "four-layer-todo-root four-layer-todo-mount",
       });
       this.root = createRoot(mount);
+      setActiveLocale(this.plugin.locale);
       this.root.render(
         <TodoWorkspace
           storage={this.plugin.getWorkspaceStorage()}
@@ -802,10 +822,11 @@ class FourLayerTodoView extends ItemView {
         />,
       );
 
-      console.log("四层待办: view opened");
     } catch (error) {
       console.error("四层待办: onOpen error", error);
-      new Notice(`四层待办加载失败: ${(error as Error).message}`);
+      new Notice(this.plugin.t("四层待办加载失败: {message}", {
+        message: error instanceof Error ? error.message : String(error),
+      }));
     }
   }
 
@@ -817,6 +838,17 @@ class FourLayerTodoView extends ItemView {
     }
     this.root = null;
   }
+
+  refreshLocale(): void {
+    if (!this.root) return;
+    setActiveLocale(this.plugin.locale);
+    this.root.render(
+      <TodoWorkspace
+        storage={this.plugin.getWorkspaceStorage()}
+        brandIconSrc={this.plugin.getIconResourcePath()}
+      />,
+    );
+  }
 }
 
 class FourLayerTodoSettingTab extends PluginSettingTab {
@@ -824,16 +856,113 @@ class FourLayerTodoSettingTab extends PluginSettingTab {
     super(plugin.app, plugin);
   }
 
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [
+      {
+        type: "group",
+        heading: this.plugin.t("Markdown 内容同步"),
+        items: [
+          {
+            name: this.plugin.t("界面语言"),
+            desc: this.plugin.t("更改后会重新打开插件视图，不会修改已有任务内容或文件夹。"),
+            control: {
+              type: "dropdown",
+              key: "language",
+              options: {
+                auto: this.plugin.t("自动（跟随 Obsidian）"),
+                zh: this.plugin.t("中文"),
+                en: this.plugin.t("英文"),
+              },
+            },
+          },
+          {
+            name: this.plugin.t("将内容同步为 Markdown"),
+            desc: this.plugin.t("为每张待办卡和长期对象创建可在 Obsidian 中双向编辑的 .md 文件。"),
+            control: {
+              type: "toggle",
+              key: "markdownSyncEnabled",
+            },
+          },
+          {
+            name: this.plugin.t("待办与对象文件夹"),
+            desc: this.plugin.t("相对于当前 Vault 根目录。长期对象保存在其中的“长期对象”目录。"),
+            control: {
+              type: "text",
+              key: "taskNotesFolder",
+              placeholder: DEFAULT_SETTINGS.taskNotesFolder,
+              validate: (value) => {
+                const folder = normalizeTaskFolder(value);
+                return folder && folder !== normalizePath(this.app.vault.configDir)
+                  ? undefined
+                  : this.plugin.t("待办笔记文件夹不能留空或使用 Obsidian 配置文件夹");
+              },
+            },
+          },
+          {
+            name: this.plugin.t("同步现有待办"),
+            desc: this.plugin.t("将当前待办和长期对象写入配置的文件夹。"),
+            disabled: () => !this.plugin.settings.markdownSyncEnabled,
+            action: () => {
+              void this.plugin.syncMarkdownBidirectionally().then(() => {
+                new Notice(this.plugin.t("四层待办已与 Markdown 文件双向同步"));
+              });
+            },
+          },
+        ],
+      },
+    ];
+  }
+
+  getControlValue(key: string): unknown {
+    if (key === "language") return this.plugin.settings.language;
+    if (key === "markdownSyncEnabled") return this.plugin.settings.markdownSyncEnabled;
+    if (key === "taskNotesFolder") return this.plugin.settings.taskNotesFolder;
+    return undefined;
+  }
+
+  async setControlValue(key: string, value: unknown): Promise<void> {
+    if (key === "language" && ["auto", "zh", "en"].includes(String(value))) {
+      await this.plugin.updateLanguage(value as LanguageSetting);
+      this.update();
+      return;
+    }
+    if (key === "markdownSyncEnabled" && typeof value === "boolean") {
+      this.plugin.settings.markdownSyncEnabled = value;
+      await this.plugin.saveSettings(value);
+      this.refreshDomState();
+      return;
+    }
+    if (key === "taskNotesFolder" && typeof value === "string") {
+      this.plugin.settings.taskNotesFolder = value;
+      await this.plugin.saveSettings(false);
+    }
+  }
+
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
     new Setting(containerEl)
-      .setName("Markdown 内容同步")
+      .setName(this.plugin.t("Markdown 内容同步"))
       .setHeading();
 
     new Setting(containerEl)
-      .setName("将内容同步为 Markdown")
-      .setDesc("为每张待办卡和长期对象创建可在 Obsidian 中双向编辑的 .md 文件。")
+      .setName(this.plugin.t("界面语言"))
+      .setDesc(this.plugin.t("更改后会重新打开插件视图，不会修改已有任务内容或文件夹。"))
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("auto", this.plugin.t("自动（跟随 Obsidian）"))
+          .addOption("zh", this.plugin.t("中文"))
+          .addOption("en", this.plugin.t("英文"))
+          .setValue(this.plugin.settings.language)
+          .onChange(async (value) => {
+            await this.plugin.updateLanguage(value as LanguageSetting);
+            this.display();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName(this.plugin.t("将内容同步为 Markdown"))
+      .setDesc(this.plugin.t("为每张待办卡和长期对象创建可在 Obsidian 中双向编辑的 .md 文件。"))
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.markdownSyncEnabled)
@@ -844,8 +973,8 @@ class FourLayerTodoSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("待办与对象文件夹")
-      .setDesc("相对于当前 Vault 根目录。长期对象保存在其中的“长期对象”目录。")
+      .setName(this.plugin.t("待办与对象文件夹"))
+      .setDesc(this.plugin.t("相对于当前 Vault 根目录。长期对象保存在其中的“长期对象”目录。"))
       .addText((text) =>
         text
           .setPlaceholder(DEFAULT_SETTINGS.taskNotesFolder)
@@ -857,16 +986,16 @@ class FourLayerTodoSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("立即同步")
-      .setDesc("将当前待办和长期对象写入配置的文件夹。")
+      .setName(this.plugin.t("立即同步"))
+      .setDesc(this.plugin.t("将当前待办和长期对象写入配置的文件夹。"))
       .addButton((button) =>
-        button.setButtonText("同步现有待办").onClick(async () => {
+        button.setButtonText(this.plugin.t("同步现有待办")).onClick(async () => {
           if (!this.plugin.settings.markdownSyncEnabled) {
-          new Notice("请先启用“将内容同步为 Markdown”");
+            new Notice(this.plugin.t("请先启用“将内容同步为 Markdown”"));
             return;
           }
           await this.plugin.syncMarkdownBidirectionally();
-          new Notice("四层待办已与 Markdown 文件双向同步");
+          new Notice(this.plugin.t("四层待办已与 Markdown 文件双向同步"));
         }),
       );
   }
@@ -874,6 +1003,7 @@ class FourLayerTodoSettingTab extends PluginSettingTab {
 
 export default class FourLayerTodoPlugin extends Plugin {
   settings: FourLayerTodoSettings = { ...DEFAULT_SETTINGS };
+  locale: AppLocale = "zh";
   private workspaceState: WorkspaceState | null = null;
   private readonly workspaceListeners = new Set<
     (state: Partial<WorkspaceState>) => void
@@ -894,10 +1024,10 @@ export default class FourLayerTodoPlugin extends Plugin {
   private markdownMutationQueue: Promise<void> = Promise.resolve();
 
   async onload(): Promise<void> {
-    console.log("四层待办: onload");
-
     const data = (await this.loadData()) as PluginData | null;
     this.settings = { ...DEFAULT_SETTINGS, ...data?.settings };
+    this.locale = resolveLocale(this.settings.language, getLanguage());
+    setActiveLocale(this.locale);
     this.workspaceState = data?.workspace ? clone(data.workspace) : null;
     if (this.workspaceState) {
       const cleanedState = removeLegacySampleData(this.workspaceState);
@@ -917,7 +1047,7 @@ export default class FourLayerTodoPlugin extends Plugin {
           await this.refreshMarkdownPaths();
         } catch (error) {
           console.error("四层待办: guided sample sync error", error);
-          new Notice("示例已恢复，但 Markdown 同步失败。请在设置中重试同步。");
+          new Notice(this.t("示例已恢复，但 Markdown 同步失败。请在设置中重试同步。"));
         }
       }
     } else {
@@ -998,20 +1128,20 @@ export default class FourLayerTodoPlugin extends Plugin {
       }),
     );
 
-    this.addRibbonIcon("layers", "打开四层待办", () => {
+    this.addRibbonIcon("layers", this.t("打开四层待办"), () => {
       this.activateView().catch((error) => {
         console.error("四层待办: ribbon error", error);
-        new Notice("四层待办打开失败");
+        new Notice(this.t("四层待办打开失败"));
       });
     });
 
     this.addCommand({
-      id: "open-four-layer-todo",
-      name: "打开四层待办",
+      id: "open-workspace",
+      name: this.t("打开四层待办"),
       callback: () => {
         this.activateView().catch((error) => {
           console.error("四层待办: command error", error);
-          new Notice("四层待办打开失败");
+          new Notice(this.t("四层待办打开失败"));
         });
       },
     });
@@ -1029,12 +1159,23 @@ export default class FourLayerTodoPlugin extends Plugin {
     }
   }
 
-  onunload(): void {
-    console.log("四层待办: onunload");
-  }
-
   getIconResourcePath(): string {
     return todoIconDataUrl;
+  }
+
+  t(text: string, values?: Record<string, string | number>): string {
+    setActiveLocale(this.locale);
+    return tr(text, values);
+  }
+
+  async updateLanguage(language: LanguageSetting): Promise<void> {
+    this.settings.language = language;
+    this.locale = resolveLocale(language, getLanguage());
+    setActiveLocale(this.locale);
+    await this.saveSettings(false);
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+      if (leaf.view instanceof FourLayerTodoView) leaf.view.refreshLocale();
+    }
   }
 
   getWorkspaceStorage(): WorkspaceStorage {
@@ -1088,12 +1229,16 @@ export default class FourLayerTodoPlugin extends Plugin {
     await this.markdownMutationQueue.catch(() => undefined);
   }
 
+  private taskFolderIsUsable(folder: string): boolean {
+    return Boolean(folder) && folder !== normalizePath(this.app.vault.configDir);
+  }
+
   private async syncWorkspaceToMarkdownInternal(): Promise<void> {
     if (!this.settings.markdownSyncEnabled || !this.workspaceState) return;
 
     const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    if (!folder || folder === ".obsidian") {
-      new Notice("待办笔记文件夹不能留空或使用 .obsidian");
+    if (!this.taskFolderIsUsable(folder)) {
+      new Notice(this.t("待办笔记文件夹不能留空或使用 Obsidian 配置文件夹"));
       return;
     }
 
@@ -1294,7 +1439,7 @@ export default class FourLayerTodoPlugin extends Plugin {
     const nextColumn = {
       id: columnId,
       title: poolTitle,
-      hint: "从 Markdown 任务池同步",
+      hint: tr("从 Markdown 任务池同步"),
       tone: TASK_POOL_TONES[state.storeColumns.length % TASK_POOL_TONES.length],
       tasks: [],
     };
@@ -1545,7 +1690,7 @@ export default class FourLayerTodoPlugin extends Plugin {
     }
 
     if (!path) {
-      throw new Error(`找不到任务 ${taskId} 对应的 Markdown 笔记`);
+      throw new Error(this.t("找不到任务 {taskId} 对应的 Markdown 笔记", { taskId }));
     }
 
     await this.openNote(path);
@@ -1553,12 +1698,12 @@ export default class FourLayerTodoPlugin extends Plugin {
 
   private async syncNativeCanvas(): Promise<void> {
     if (!this.workspaceState) {
-      throw new Error("白板尚未初始化");
+      throw new Error(this.t("白板尚未初始化"));
     }
 
     const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    if (!folder || folder === ".obsidian") {
-      throw new Error("待办笔记文件夹不可用");
+    if (!this.taskFolderIsUsable(folder)) {
+      throw new Error(this.t("待办笔记文件夹不可用"));
     }
 
     await this.ensureTaskFolderStructure(folder);
@@ -1636,8 +1781,8 @@ export default class FourLayerTodoPlugin extends Plugin {
 
   private async openNativeCanvas(): Promise<void> {
     const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    if (!folder || folder === ".obsidian") {
-      throw new Error("待办笔记文件夹不可用");
+    if (!this.taskFolderIsUsable(folder)) {
+      throw new Error(this.t("待办笔记文件夹不可用"));
     }
 
     const path = `${folder}/白板/${NATIVE_CANVAS_FILE_NAME}`;
@@ -1647,7 +1792,7 @@ export default class FourLayerTodoPlugin extends Plugin {
       file = this.app.vault.getAbstractFileByPath(path);
     }
     if (!(file instanceof TFile)) {
-      throw new Error("无法创建原生 Canvas");
+      throw new Error(this.t("无法创建原生 Canvas"));
     }
     await this.app.workspace.getLeaf("tab").openFile(file);
   }
@@ -1678,7 +1823,7 @@ export default class FourLayerTodoPlugin extends Plugin {
 
   private async listNativeCanvases(): Promise<NativeCanvasFile[]> {
     const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    if (!folder || folder === ".obsidian") return [];
+    if (!this.taskFolderIsUsable(folder)) return [];
 
     const whiteboardFolder = `${folder}/白板/`;
     return this.app.vault
@@ -1705,7 +1850,7 @@ export default class FourLayerTodoPlugin extends Plugin {
       file.extension !== "canvas" ||
       !this.workspaceState
     ) {
-      throw new Error("Canvas 文件不可用");
+      throw new Error(this.t("Canvas 文件不可用"));
     }
 
     const raw = JSON.parse(await this.app.vault.read(file)) as {
@@ -1713,7 +1858,7 @@ export default class FourLayerTodoPlugin extends Plugin {
       edges?: unknown;
     };
     if (!Array.isArray(raw.nodes)) {
-      throw new Error("Canvas 文件格式无效");
+      throw new Error(this.t("Canvas 文件格式无效"));
     }
 
     const cards: WorkspaceState["canvasCards"] = [];
@@ -1753,7 +1898,7 @@ export default class FourLayerTodoPlugin extends Plugin {
           title: parsedTask?.title ?? noteFile.basename,
           detail: parsedTask?.detail ?? "",
           source: "笔记",
-          meta: parsedTask?.meta ?? "Canvas 笔记",
+          meta: parsedTask?.meta ?? tr("Canvas 笔记"),
           priority: parsedTask?.priority,
           object: parsedTask?.object,
           done: parsedTask?.done,
@@ -1773,7 +1918,7 @@ export default class FourLayerTodoPlugin extends Plugin {
           .slice(NATIVE_CANVAS_TASK_MARKER.length)
           .trimStart();
         const heading = taskText.match(/^\*\*(.+?)\*\*(?:\r?\n\r?\n)?/);
-        const title = heading?.[1].trim() || "未命名待办";
+        const title = heading?.[1].trim() || tr("未命名待办");
         const detail = heading
           ? taskText.slice(heading[0].length).trim()
           : taskText;
@@ -1782,7 +1927,7 @@ export default class FourLayerTodoPlugin extends Plugin {
           title,
           detail,
           source: "文本",
-          meta: "Canvas 待办",
+          meta: tr("Canvas 待办"),
           x,
           y,
           tone,
@@ -1985,7 +2130,7 @@ export default class FourLayerTodoPlugin extends Plugin {
   private async archiveMarkdownTaskInternal(taskId: string): Promise<void> {
     const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
     if (!this.settings.markdownSyncEnabled || !folder) {
-      throw new Error("归档需要启用 Markdown 同步");
+      throw new Error(this.t("归档需要启用 Markdown 同步"));
     }
 
     let path = this.taskPaths.get(taskId);
@@ -2024,7 +2169,7 @@ export default class FourLayerTodoPlugin extends Plugin {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (file instanceof TFile) {
       this.pendingMarkdownWrites.delete(file.path);
-      await this.app.vault.trash(file, true);
+      await this.app.fileManager.trashFile(file);
     }
     this.taskPaths.delete(taskId);
   }
@@ -2089,7 +2234,7 @@ export default class FourLayerTodoPlugin extends Plugin {
       title: existing?.title ?? file.basename,
       detail: existing?.detail ?? body,
       source: existing?.source ?? "笔记",
-      meta: existing?.meta ?? "已移动笔记",
+      meta: existing?.meta ?? tr("已移动笔记"),
       priority: existing?.priority,
       object: targetObject?.title ?? existing?.object,
       x: target.location === "canvas" ? existing?.x : undefined,
@@ -2108,7 +2253,7 @@ export default class FourLayerTodoPlugin extends Plugin {
             object.id === targetObject.id
               ? {
                   ...object,
-                  activity: `最近关联：${markdownTask.title}`,
+                  activity: tr("最近关联：{title}", { title: markdownTask.title }),
                   relatedTaskIds: [
                     ...new Set([...object.relatedTaskIds, markdownTask.id]),
                   ],

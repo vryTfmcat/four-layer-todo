@@ -7,6 +7,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { tr } from "../i18n";
 
 export type TaskItem = {
   id: string;
@@ -123,283 +124,6 @@ export type WorkspaceStorage = {
   listNativeCanvases?: () => Promise<NativeCanvasFile[]>;
   loadNativeCanvas?: (path: string) => Promise<void> | void;
 };
-
-const initialCanvas: CanvasCard[] = [
-  {
-    id: "canvas-main",
-    title: "制作 Obsidian 待办插件",
-    detail: "完成手动交互页面，并把确认后的模型制作成插件。",
-    source: "笔记",
-    meta: "项目主任务",
-    x: 315,
-    y: 92,
-    tone: "sage",
-  },
-  {
-    id: "canvas-structure",
-    title: "确定白板卡片结构",
-    detail: "笔记、文本块与短文本卡片共存。",
-    source: "文本",
-    meta: "拆解任务",
-    x: 72,
-    y: 300,
-    tone: "cream",
-    parent: "canvas-main",
-  },
-  {
-    id: "canvas-cache",
-    title: "验证缓存现场恢复",
-    detail: "保存位置、关系、进度与最后聚焦点。",
-    source: "文本",
-    meta: "正在处理",
-    x: 348,
-    y: 340,
-    tone: "lavender",
-    parent: "canvas-main",
-  },
-  {
-    id: "canvas-storage",
-    title: "设计任务存储器",
-    detail: "采用可扩展任务池的 Kanban 视图。",
-    source: "笔记",
-    meta: "下一步",
-    x: 642,
-    y: 290,
-    tone: "blue",
-    parent: "canvas-main",
-  },
-];
-
-const initialCanvasConnections: CanvasConnection[] = [
-  { id: "connection-main-structure", fromId: "canvas-main", toId: "canvas-structure" },
-  { id: "connection-main-cache", fromId: "canvas-main", toId: "canvas-cache" },
-  { id: "connection-main-storage", fromId: "canvas-main", toId: "canvas-storage" },
-];
-
-const initialInbox: TaskItem[] = [
-  {
-    id: "inbox-1",
-    title: "也许可以加入一个任务关联图",
-    detail: "刚记录的想法，尚未判断进入哪里。",
-    source: "文本",
-  },
-  {
-    id: "inbox-2",
-    title: "整理周末想看的纪录片",
-    detail: "来自随手记录，可能进入任务存储器。",
-    source: "文本",
-  },
-  {
-    id: "inbox-3",
-    title: "研究白板在手机上的交互",
-    detail: "需要判断是否属于当前版本。",
-    source: "笔记",
-  },
-];
-
-const initialTodo: TaskItem[] = [
-  {
-    id: "todo-1",
-    title: "制作待办页面的静态原型",
-    detail: "来自当前主线，适合近期开始。",
-    source: "笔记",
-    meta: "系统推荐",
-  },
-  {
-    id: "todo-2",
-    title: "给任务文本增加稳定块 ID",
-    detail: "Task List Kanban 的做法值得验证。",
-    source: "文本",
-    meta: "手动加入",
-  },
-  {
-    id: "todo-3",
-    title: "确定插件数据保存边界",
-    detail: "内容留在 Obsidian，插件保存位置与布局。",
-    source: "笔记",
-    meta: "系统推荐",
-  },
-];
-
-const initialCache: TaskItem[] = [
-  {
-    id: "cache-1",
-    title: "任务推荐算法草稿",
-    detail: "已写到资格过滤，暂缺展示公平性部分。",
-    source: "笔记",
-    meta: "完成约 45%",
-  },
-  {
-    id: "cache-2",
-    title: "移动端白板手势",
-    detail: "已经比较拖动与长按，等待真机验证。",
-    source: "文本",
-    meta: "等待设备",
-  },
-];
-
-const initialStore: StoreColumn[] = [
-  {
-    id: "mainline",
-    title: "主线任务",
-    hint: "持续推进的核心方向",
-    tone: "green",
-    tasks: [
-      {
-        id: "store-1",
-        title: "准备下周的产品演示",
-        detail: "完善讲解顺序并检查演示数据。",
-        source: "笔记",
-        priority: "P5",
-        object: "建立稳定的工作节奏",
-      },
-      {
-        id: "store-2",
-        title: "更新个人作品集",
-        detail: "补充最近完成的两个案例。",
-        source: "笔记",
-        priority: "P4",
-        object: "持续学习",
-      },
-    ],
-  },
-  {
-    id: "waiting",
-    title: "等待处理",
-    hint: "条件未满足或等待恢复",
-    tone: "amber",
-    tasks: [
-      {
-        id: "store-3",
-        title: "确认社区活动场地",
-        detail: "方案已经提交，等待场地方回复。",
-        source: "笔记",
-        priority: "P4",
-        object: "社区活动",
-      },
-      {
-        id: "store-4",
-        title: "组装新书架",
-        detail: "等待配件快递到货。",
-        source: "文本",
-        priority: "P3",
-      },
-    ],
-  },
-  {
-    id: "possible",
-    title: "可能处理",
-    hint: "值得保留，但暂不承诺",
-    tone: "blue",
-    tasks: [
-      {
-        id: "store-5",
-        title: "阅读《设计心理学》",
-        detail: "先保存书目，不设日期。",
-        source: "文本",
-        priority: "P2",
-        object: "交互设计",
-      },
-      {
-        id: "store-6",
-        title: "整理一次旅行的照片",
-        detail: "选出值得保留和分享的照片。",
-        source: "笔记",
-        priority: "P2",
-        object: "城市摄影",
-      },
-      {
-        id: "store-7",
-        title: "尝试一周无纸化记账",
-        detail: "观察是否能降低日常记录负担。",
-        source: "文本",
-        priority: "P2",
-        object: "工具应该减少决策负担",
-      },
-    ],
-  },
-  {
-    id: "problems",
-    title: "长期问题",
-    hint: "持续思考，不要求立即完成",
-    tone: "violet",
-    tasks: [
-      {
-        id: "store-8",
-        title: "怎样建立可持续的学习习惯？",
-        detail: "持续观察环境、节奏与反馈的影响。",
-        source: "笔记",
-        priority: "P3",
-        object: "持续学习",
-      },
-      {
-        id: "store-9",
-        title: "任务工具怎样减少决策负担？",
-        detail: "在实际使用中持续检验。",
-        source: "文本",
-        priority: "P3",
-        object: "工具应该减少决策负担",
-      },
-    ],
-  },
-];
-
-const initialLongTermObjects: LongTermObject[] = [
-  {
-    id: "object-photo",
-    kind: "兴趣",
-    title: "城市摄影",
-    description: "观察街道、光线和日常生活。",
-    activity: "最近关联：整理旅行照片",
-    tone: "mint",
-    relatedTaskIds: ["store-6"],
-  },
-  {
-    id: "object-health",
-    kind: "目标",
-    title: "维持身体健康",
-    description: "睡眠、饮食、运动与长期精力。",
-    activity: "最近关联：恢复每周步行",
-    tone: "peach",
-    relatedTaskIds: [],
-  },
-  {
-    id: "object-learning",
-    kind: "长期想法",
-    title: "持续学习",
-    description: "寻找能够长期维持的节奏、环境和反馈。",
-    activity: "最近关联：设计每周回顾",
-    tone: "lilac",
-    relatedTaskIds: ["store-2", "store-8"],
-  },
-  {
-    id: "object-food",
-    kind: "兴趣",
-    title: "烹饪与食物",
-    description: "尝试家常菜、季节食材和简单搭配。",
-    activity: "最近关联：记录三道常做菜",
-    tone: "sky",
-    relatedTaskIds: [],
-  },
-  {
-    id: "object-rhythm",
-    kind: "目标",
-    title: "建立稳定的工作节奏",
-    description: "在专注、休息和复盘之间取得平衡。",
-    activity: "最近关联：安排每周回顾",
-    tone: "mint",
-    relatedTaskIds: ["store-1", "canvas-main"],
-  },
-  {
-    id: "object-tools",
-    kind: "长期想法",
-    title: "工具应该减少决策负担",
-    description: "系统负责过滤，用户保留最终选择。",
-    activity: "最近关联：任务推荐算法草稿",
-    tone: "lilac",
-    relatedTaskIds: ["store-7", "store-9", "cache-1"],
-  },
-];
 
 const poolTones = ["green", "amber", "blue", "violet"];
 const CANVAS_CARD_WIDTH = 250;
@@ -523,16 +247,16 @@ function TaskAddActions({
       <button
         className="task-create-button"
         onClick={onCreate}
-        aria-label="创建待办"
-        title="创建待办"
+        aria-label={tr("创建待办")}
+        title={tr("创建待办")}
       >
         <Icon>＋</Icon>
       </button>
       <button
         className="task-link-button"
         onClick={onLink}
-        aria-label="链接笔记"
-        title="链接笔记"
+        aria-label={tr("链接笔记")}
+        title={tr("链接笔记")}
       >
         <Icon>⛓</Icon>
       </button>
@@ -541,12 +265,12 @@ function TaskAddActions({
 }
 
 function destinationLabel(destination: MoveDestination) {
-  if (destination === "whiteboard") return "白板";
-  if (destination === "workbench") return "缓存工作台";
-  if (destination === "archive") return "归档";
-  if (destination === "delete") return "删除";
-  if (destination === "unlink") return "取消链接";
-  return "任务存储器";
+  if (destination === "whiteboard") return tr("白板");
+  if (destination === "workbench") return tr("缓存工作台");
+  if (destination === "archive") return tr("归档");
+  if (destination === "delete") return tr("删除");
+  if (destination === "unlink") return tr("取消链接");
+  return tr("任务存储器");
 }
 
 function getConnectionCoordinates(from: CanvasCard, to: CanvasCard) {
@@ -862,7 +586,7 @@ export function TodoWorkspace(
     if (!editingTask) return;
     const title = editingTask.title.trim();
     if (!title) {
-      showToast("任务名称不能为空");
+      showToast(tr("任务名称不能为空"));
       return;
     }
 
@@ -888,7 +612,7 @@ export function TodoWorkspace(
       move?.task.id === updated.id ? { ...move, task: updated } : move,
     );
     setEditingTask(null);
-    showToast(`已更新“${title}”`);
+    showToast(tr("已更新“{title}”", { title }));
   };
 
   const allTasks = useMemo(
@@ -962,15 +686,15 @@ export function TodoWorkspace(
     setOpenMenuId(null);
     if (destination === "archive") {
       if (!storage?.archiveTask) {
-        showToast("归档仅在 Obsidian 插件中可用");
+        showToast(tr("归档仅在 Obsidian 插件中可用"));
         return;
       }
       try {
         await storage.archiveTask(task.id);
         removeFromOrigin(origin, task.id);
-        showToast(`已将“${task.title}”归档`);
+        showToast(tr("已将“{title}”归档", { title: task.title }));
       } catch {
-        showToast(`归档“${task.title}”失败`);
+        showToast(tr("归档“{title}”失败", { title: task.title }));
       }
       return;
     }
@@ -978,20 +702,23 @@ export function TodoWorkspace(
       try {
         await storage?.deleteTask?.(task.id);
         removeFromOrigin(origin, task.id);
-        showToast(`已删除“${task.title}”`);
+        showToast(tr("已删除“{title}”", { title: task.title }));
       } catch {
-        showToast(`删除“${task.title}”失败`);
+        showToast(tr("删除“{title}”失败", { title: task.title }));
       }
       return;
     }
     if (destination === "unlink") {
       removeFromOrigin(origin, task.id);
-      showToast(`已取消“${task.title}”的笔记链接`);
+      showToast(tr("已取消“{title}”的笔记链接", { title: task.title }));
       return;
     }
     setPendingMove({ task, origin, destination });
     showPage(destination);
-    showToast(`已选中“${task.title}”；请点击一个具体位置添加到${destinationLabel(destination)}。`);
+    showToast(tr("已选中“{title}”；请点击一个具体位置添加到{destination}。", {
+      title: task.title,
+      destination: destinationLabel(destination),
+    }));
   };
 
   const removeFromOrigin = (origin: TaskOrigin, taskId: string) => {
@@ -1036,10 +763,13 @@ export function TodoWorkspace(
     if (pendingMove.task.linkedNotePath && storage?.moveTaskNote) {
       try {
         await storage.moveTaskNote(pendingMove.task.linkedNotePath, noteTarget);
-        showToast(`已将“${pendingMove.task.title}”移动到${targetName(target, storeColumns)}`);
+        showToast(tr("已将“{title}”移动到{destination}", {
+          title: pendingMove.task.title,
+          destination: targetName(target, storeColumns),
+        }));
         setPendingMove(null);
       } catch {
-        showToast(`移动“${pendingMove.task.title}”失败`);
+        showToast(tr("移动“{title}”失败", { title: pendingMove.task.title }));
       }
       return;
     }
@@ -1047,12 +777,15 @@ export function TodoWorkspace(
       try {
         const moved = await storage.moveTaskById(pendingMove.task.id, noteTarget);
         if (moved) {
-          showToast(`已将“${pendingMove.task.title}”移动到${targetName(target, storeColumns)}`);
+          showToast(tr("已将“{title}”移动到{destination}", {
+            title: pendingMove.task.title,
+            destination: targetName(target, storeColumns),
+          }));
           setPendingMove(null);
           return;
         }
       } catch {
-        showToast(`移动“${pendingMove.task.title}”失败`);
+        showToast(tr("移动“{title}”失败", { title: pendingMove.task.title }));
         return;
       }
     }
@@ -1063,7 +796,7 @@ export function TodoWorkspace(
       detail: pendingMove.task.detail,
       source: pendingMove.task.source,
       linkedNotePath: pendingMove.task.linkedNotePath,
-      meta: `移动自${originLabel(pendingMove.origin)}`,
+      meta: tr("移动自{origin}", { origin: originLabel(pendingMove.origin) }),
       priority: pendingMove.task.priority,
       object: pendingMove.task.object,
     };
@@ -1097,7 +830,7 @@ export function TodoWorkspace(
         ),
       );
     }
-    showToast(`已添加到${targetName(target, storeColumns)}`);
+    showToast(tr("已添加到{destination}", { destination: targetName(target, storeColumns) }));
     setPendingMove(null);
   };
 
@@ -1118,7 +851,7 @@ export function TodoWorkspace(
           title,
           detail: newTaskDetail.trim(),
           source: "文本",
-          meta: "手动加入",
+          meta: tr("手动加入"),
           ...position,
           tone: "cream",
         },
@@ -1127,7 +860,7 @@ export function TodoWorkspace(
     setNewTaskTitle("");
     setNewTaskDetail("");
     setAddingTask(false);
-    showToast("任务已放入白板");
+    showToast(tr("任务已放入白板"));
   };
 
   const addPool = () => {
@@ -1138,7 +871,7 @@ export function TodoWorkspace(
       {
         id: createId("pool"),
         title,
-        hint: "自定义任务池",
+        hint: tr("自定义任务池"),
         tone: poolTones[columns.length % poolTones.length],
         tasks: [],
       },
@@ -1160,8 +893,8 @@ export function TodoWorkspace(
       id: createId("object"),
       kind: newLongTermObjectKind,
       title,
-      description: newLongTermObjectDescription.trim() || "暂无说明。",
-      activity: "等待关联任务",
+      description: newLongTermObjectDescription.trim() || tr("暂无说明。"),
+      activity: tr("等待关联任务"),
       tone: toneByKind[newLongTermObjectKind],
       relatedTaskIds: [],
     };
@@ -1213,7 +946,7 @@ export function TodoWorkspace(
         item.id === object.id
           ? {
               ...item,
-              activity: `最近关联：${title}`,
+              activity: tr("最近关联：{title}", { title }),
               relatedTaskIds: [...new Set([...item.relatedTaskIds, taskId])],
             }
           : item,
@@ -1223,7 +956,7 @@ export function TodoWorkspace(
     setNewRelatedTaskTitle("");
     setNewRelatedTaskDetail("");
     setNewRelatedTaskPoolId("");
-    showToast(`已将“${title}”关联到“${object.title}”`);
+    showToast(tr("已将“{title}”关联到“{object}”", { title, object: object.title }));
   };
 
   const openNotePicker = (target: NoteTaskTarget) => {
@@ -1243,15 +976,15 @@ export function TodoWorkspace(
 
     if (note.isTaskFolderNote) {
       if (!storage?.moveTaskNote) {
-        showToast("移动待办笔记暂不可用");
+        showToast(tr("移动待办笔记暂不可用"));
         return;
       }
       try {
         await storage.moveTaskNote(note.path, noteTaskTarget);
-        showToast(`已将“${note.title}”移动到指定位置`);
+        showToast(tr("已将“{title}”移动到指定位置", { title: note.title }));
         closeNotePicker();
       } catch {
-        showToast(`移动“${note.title}”失败`);
+        showToast(tr("移动“{title}”失败", { title: note.title }));
       }
       return;
     }
@@ -1265,7 +998,7 @@ export function TodoWorkspace(
       title: note.title,
       detail: `[[${note.title}]]`,
       source: "笔记",
-      meta: "双链笔记",
+      meta: tr("双链笔记"),
       priority: "P3",
       object: object?.title,
       linkedNotePath: note.path,
@@ -1308,7 +1041,7 @@ export function TodoWorkspace(
           item.id === object.id
             ? {
                 ...item,
-                activity: `最近关联：${note.title}`,
+                activity: tr("最近关联：{title}", { title: note.title }),
                 relatedTaskIds: [...new Set([...item.relatedTaskIds, taskId])],
               }
             : item,
@@ -1316,37 +1049,37 @@ export function TodoWorkspace(
       );
     }
     closeNotePicker();
-    showToast(`已以双链添加“${note.title}”`);
+    showToast(tr("已以双链添加“{title}”", { title: note.title }));
   };
 
   const openTaskNote = (task: TaskItem) => {
     const handler = task.linkedNotePath ? storage?.openNote : storage?.openTaskNote;
     if (!handler) {
-      showToast("没有找到对应的 Markdown 笔记");
+      showToast(tr("没有找到对应的 Markdown 笔记"));
       return;
     }
     const action = task.linkedNotePath
       ? handler(task.linkedNotePath)
       : handler(task.id);
     void Promise.resolve(action).catch(() =>
-      showToast(`打开“${task.title}”的 Markdown 笔记失败`),
+      showToast(tr("打开“{title}”的 Markdown 笔记失败", { title: task.title })),
     );
   };
 
   const openNativeCanvas = () => {
     if (!storage?.openNativeCanvas) {
-      showToast("原生 Canvas 仅在 Obsidian 插件中可用");
+      showToast(tr("原生 Canvas 仅在 Obsidian 插件中可用"));
       return;
     }
     void Promise.resolve(
       storage.openNativeCanvas(),
     )
-      .catch(() => showToast("打开原生 Canvas 失败"));
+      .catch(() => showToast(tr("打开原生 Canvas 失败")));
   };
 
   const openNativeCanvasLoader = () => {
     if (!storage?.listNativeCanvases) {
-      showToast("原生 Canvas 仅在 Obsidian 插件中可用");
+      showToast(tr("原生 Canvas 仅在 Obsidian 插件中可用"));
       return;
     }
     setShowNativeCanvasLoader(true);
@@ -1356,7 +1089,7 @@ export function TodoWorkspace(
       .then((files) => setNativeCanvasFiles(files))
       .catch(() => {
         setNativeCanvasFiles([]);
-        showToast("读取白板文件夹失败");
+        showToast(tr("读取白板文件夹失败"));
       })
       .finally(() => setLoadingNativeCanvases(false));
   };
@@ -1366,9 +1099,9 @@ export function TodoWorkspace(
     void Promise.resolve(storage.loadNativeCanvas(file.path))
       .then(() => {
         setShowNativeCanvasLoader(false);
-        showToast(`已加载“${file.title}”`);
+        showToast(tr("已加载“{title}”", { title: file.title }));
       })
-      .catch(() => showToast("加载 Canvas 失败"));
+      .catch(() => showToast(tr("加载 Canvas 失败")));
   };
 
   const addStoreTask = (columnId: string) => {
@@ -1408,13 +1141,13 @@ export function TodoWorkspace(
       title,
       detail,
       source: "文本",
-      meta: "手动加入",
+      meta: tr("手动加入"),
     };
 
     if (list === "inbox") setInbox((items) => [...items, task]);
     if (list === "todo") setTodo((items) => [...items, task]);
     if (list === "cache") setCache((items) => [...items, task]);
-    showToast("任务已加入工作台");
+    showToast(tr("任务已加入工作台"));
   };
 
   const selectCanvasTool = (tool: "select" | "connect" | "text") => {
@@ -1666,33 +1399,35 @@ export function TodoWorkspace(
       <h3>{task.title}</h3>
       <p>{task.detail}</p>
       <footer>
-        <span>{task.object ? `◎ ${task.object}` : "未关联长期对象"}</span>
+        <span>{task.object ? `◎ ${task.object}` : tr("未关联长期对象")}</span>
       </footer>
     </article>
   );
 
   const moveBanner = pendingMove ? (
     <div className="move-banner" role="status">
-      <span>正在移动：<strong>{pendingMove.task.title}</strong></span>
-      <p>请点击一个具体位置，添加到{destinationLabel(pendingMove.destination)}。</p>
-      <button onClick={() => setPendingMove(null)}>取消移动</button>
+      <span>{tr("正在移动：")}<strong>{pendingMove.task.title}</strong></span>
+      <p>{tr("请点击一个具体位置，添加到{destination}。", {
+        destination: destinationLabel(pendingMove.destination),
+      })}</p>
+      <button onClick={() => setPendingMove(null)}>{tr("取消移动")}</button>
     </div>
   ) : null;
 
   const notePicker = noteTaskTarget ? (
     <div className="note-picker-backdrop" onPointerDown={(event) => event.stopPropagation()}>
-      <section className="dialog-card note-picker" role="dialog" aria-label="链接笔记">
-        <span className="eyebrow">链接笔记</span>
+      <section className="dialog-card note-picker" role="dialog" aria-label={tr("链接笔记")}>
+        <span className="eyebrow">{tr("链接笔记")}</span>
         <input
           autoFocus
           value={noteSearch}
           onChange={(event) => setNoteSearch(event.target.value)}
-          placeholder="搜索笔记…"
-          aria-label="搜索笔记"
+          placeholder={tr("搜索笔记…")}
+          aria-label={tr("搜索笔记")}
         />
         <div className="note-suggestion-list">
           {loadingNoteSuggestions ? (
-            <span>正在查找笔记</span>
+            <span>{tr("正在查找笔记")}</span>
           ) : noteSuggestions.length ? (
             noteSuggestions.map((note) => (
               <button
@@ -1707,11 +1442,11 @@ export function TodoWorkspace(
               </button>
             ))
           ) : (
-            <span>没有可用笔记</span>
+            <span>{tr("没有可用笔记")}</span>
           )}
         </div>
         <div>
-          <button type="button" onClick={closeNotePicker}>取消</button>
+          <button type="button" onClick={closeNotePicker}>{tr("取消")}</button>
         </div>
       </section>
     </div>
@@ -1727,16 +1462,16 @@ export function TodoWorkspace(
       <form
         className="dialog-card task-editor"
         role="dialog"
-        aria-label={`编辑任务：${editingTask.title}`}
+        aria-label={tr("编辑任务：{title}", { title: editingTask.title })}
         onPointerDown={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
           saveTaskEditor();
         }}
       >
-        <span className="eyebrow">编辑任务卡</span>
+        <span className="eyebrow">{tr("编辑任务卡")}</span>
         <label>
-          <span>任务名称</span>
+          <span>{tr("任务名称")}</span>
           <input
             autoFocus
             value={editingTask.title}
@@ -1748,7 +1483,7 @@ export function TodoWorkspace(
           />
         </label>
         <label>
-          <span>任务内容</span>
+          <span>{tr("任务内容")}</span>
           <textarea
             value={editingTask.detail}
             onChange={(event) =>
@@ -1760,7 +1495,7 @@ export function TodoWorkspace(
           />
         </label>
         <label>
-          <span>优先级</span>
+          <span>{tr("优先级")}</span>
           <select
             value={editingTask.priority ?? ""}
             onChange={(event) =>
@@ -1775,16 +1510,16 @@ export function TodoWorkspace(
               )
             }
           >
-            <option value="">未设置</option>
-            <option value="P5">P5 · 必须优先看见</option>
-            <option value="P4">P4 · 近期重要</option>
-            <option value="P3">P3 · 正常候选</option>
-            <option value="P2">P2 · 保留可能性</option>
+            <option value="">{tr("未设置")}</option>
+            <option value="P5">{tr("P5 · 必须优先看见")}</option>
+            <option value="P4">{tr("P4 · 近期重要")}</option>
+            <option value="P3">{tr("P3 · 正常候选")}</option>
+            <option value="P2">{tr("P2 · 保留可能性")}</option>
           </select>
         </label>
         <div>
-          <button type="button" onClick={() => setEditingTask(null)}>取消</button>
-          <button type="submit">保存修改</button>
+          <button type="button" onClick={() => setEditingTask(null)}>{tr("取消")}</button>
+          <button type="submit">{tr("保存修改")}</button>
         </div>
       </form>
     </div>
@@ -1800,29 +1535,29 @@ export function TodoWorkspace(
               setMode("workspace");
               setFlipped(true);
             }}
-            aria-label="返回缓存工作台"
+            aria-label={tr("返回缓存工作台")}
           >
             <Icon>←</Icon>
           </button>
           <div className="brand-mark">
-            {brandIconSrc ? <img src={brandIconSrc} alt="" /> : "层"}
+            {brandIconSrc ? <img src={brandIconSrc} alt="" /> : tr("层")}
           </div>
           <div className="topbar-title">
-            <strong>{storageView === "tasks" ? "任务存储器" : "长期对象"}</strong>
+            <strong>{storageView === "tasks" ? tr("任务存储器") : tr("长期对象")}</strong>
           </div>
-          <div className="attention-path" aria-label="当前注意力流程">
-            <button onClick={() => showPage("whiteboard")}>1 白板</button>
+          <div className="attention-path" aria-label={tr("当前注意力流程")}>
+            <button onClick={() => showPage("whiteboard")}>{tr("1 白板")}</button>
             <i>—</i>
-            <button onClick={() => showPage("workbench")}>2 工作台</button>
+            <button onClick={() => showPage("workbench")}>{tr("2 工作台")}</button>
             <i>—</i>
-            <span className="current">3–4 后台</span>
+            <span className="current">{tr("3–4 后台")}</span>
           </div>
           <button
             className="icon-button appearance-toggle"
             onClick={() => setTransparentUi((value) => !value)}
-            aria-label={transparentUi ? "使用原始配色" : "使用透明配色"}
+            aria-label={transparentUi ? tr("使用原始配色") : tr("使用透明配色")}
             aria-pressed={transparentUi}
-            title={transparentUi ? "使用原始配色" : "使用透明配色"}
+            title={transparentUi ? tr("使用原始配色") : tr("使用透明配色")}
           >
             <Icon>{transparentUi ? "◐" : "◌"}</Icon>
           </button>
@@ -1831,8 +1566,8 @@ export function TodoWorkspace(
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="搜索全部任务…"
-              aria-label="搜索任务存储器"
+              placeholder={tr("搜索全部任务…")}
+              aria-label={tr("搜索任务存储器")}
             />
           </div>
         </header>
@@ -1842,7 +1577,7 @@ export function TodoWorkspace(
         <div className="storage-layout">
           <aside className="storage-sidebar">
             <div className="sidebar-section">
-              <span className="sidebar-label">浏览</span>
+              <span className="sidebar-label">{tr("浏览")}</span>
               <button
                 className={storageView === "tasks" && !selectedStoreColumn ? "active" : ""}
                 onClick={() => {
@@ -1851,7 +1586,7 @@ export function TodoWorkspace(
                 }}
               >
                 <Icon>▦</Icon>
-                任务存储器
+                {tr("任务存储器")}
                 <span>{storeColumns.reduce((sum, col) => sum + col.tasks.length, 0)}</span>
               </button>
               <button
@@ -1862,12 +1597,12 @@ export function TodoWorkspace(
                 }}
               >
                 <Icon>◎</Icon>
-                长期对象
+                {tr("长期对象")}
                 <span>{longTermObjects.length}</span>
               </button>
             </div>
             <div className="sidebar-section">
-              <span className="sidebar-label">任务池</span>
+              <span className="sidebar-label">{tr("任务池")}</span>
               {storeColumns.map((column) => (
                 <button
                   key={column.id}
@@ -1884,7 +1619,7 @@ export function TodoWorkspace(
               ))}
               <button className="sidebar-add-pool" onClick={() => setAddingPool(true)}>
                 <Icon>＋</Icon>
-                添加任务池
+                {tr("添加任务池")}
               </button>
             </div>
           </aside>
@@ -1896,7 +1631,7 @@ export function TodoWorkspace(
                   <>
                     <div className="storage-heading">
                       <div>
-                        <span className="eyebrow">任务池 · 瀑布流</span>
+                        <span className="eyebrow">{tr("任务池 · 瀑布流")}</span>
                         <h1>{selectedStoreColumn.title}</h1>
                         <p>{selectedStoreColumn.hint}</p>
                       </div>
@@ -1904,7 +1639,7 @@ export function TodoWorkspace(
                         className="primary-button"
                         onClick={() => setSelectedStoreColumnId(null)}
                       >
-                        查看全部任务池
+                        {tr("查看全部任务池")}
                       </button>
                     </div>
                     <div className="pool-masonry">
@@ -1928,12 +1663,12 @@ export function TodoWorkspace(
                   <>
                     <div className="storage-heading">
                       <div>
-                        <span className="eyebrow">全部任务 · Kanban</span>
-                        <h1>任务存储器</h1>
-                        <p>任务池可以自由添加；拖动卡片可调整任务所属的任务池。</p>
+                        <span className="eyebrow">{tr("全部任务 · Kanban")}</span>
+                        <h1>{tr("任务存储器")}</h1>
+                        <p>{tr("任务池可以自由添加；拖动卡片可调整任务所属的任务池。")}</p>
                       </div>
                       <button className="primary-button" onClick={() => setAddingPool(true)}>
-                        ＋ 添加任务池
+                        {tr("＋ 添加任务池")}
                       </button>
                     </div>
                     <div className="kanban-board">
@@ -1966,7 +1701,7 @@ export function TodoWorkspace(
                                 completeMove({ kind: "storage", columnId: column.id })
                               }
                             >
-                              添加到“{column.title}”
+                              {tr("添加到“{title}”", { title: column.title })}
                             </button>
                           )}
                           <div className="kanban-stack">
@@ -2023,17 +1758,17 @@ export function TodoWorkspace(
               addPool();
             }}
           >
-            <span className="eyebrow">新任务池</span>
-            <h2>添加一种任务类型</h2>
+            <span className="eyebrow">{tr("新任务池")}</span>
+            <h2>{tr("添加一种任务类型")}</h2>
             <input
               autoFocus
               value={newPoolTitle}
               onChange={(event) => setNewPoolTitle(event.target.value)}
-              placeholder="例如：想看的书、外出事项"
+              placeholder={tr("例如：想看的书、外出事项")}
             />
             <div>
-              <button type="button" onClick={() => setAddingPool(false)}>取消</button>
-              <button type="submit">创建任务池</button>
+              <button type="button" onClick={() => setAddingPool(false)}>{tr("取消")}</button>
+              <button type="submit">{tr("创建任务池")}</button>
             </div>
           </form>
         )}
@@ -2045,22 +1780,22 @@ export function TodoWorkspace(
               addStoreTask(addingStoreTaskTo);
             }}
           >
-            <span className="eyebrow">任务存储器</span>
+            <span className="eyebrow">{tr("任务存储器")}</span>
             <h2>
-              添加到
+              {tr("添加到")}
               {storeColumns.find((column) => column.id === addingStoreTaskTo)?.title ??
-                "任务池"}
+                tr("任务池")}
             </h2>
             <input
               autoFocus
               value={newStoreTaskTitle}
               onChange={(event) => setNewStoreTaskTitle(event.target.value)}
-              placeholder="任务名称"
+              placeholder={tr("任务名称")}
             />
             <textarea
               value={newStoreTaskDetail}
               onChange={(event) => setNewStoreTaskDetail(event.target.value)}
-              placeholder="任务内容（可选）"
+              placeholder={tr("任务内容（可选）")}
               rows={4}
             />
             <div>
@@ -2072,9 +1807,9 @@ export function TodoWorkspace(
                   setNewStoreTaskDetail("");
                 }}
               >
-                取消
+                {tr("取消")}
               </button>
-              <button type="submit">添加</button>
+              <button type="submit">{tr("添加")}</button>
             </div>
           </form>
         )}
@@ -2086,13 +1821,13 @@ export function TodoWorkspace(
               addLongTermObject();
             }}
           >
-            <span className="eyebrow">新长期对象</span>
-            <h2>记录一个长期方向</h2>
+            <span className="eyebrow">{tr("新长期对象")}</span>
+            <h2>{tr("记录一个长期方向")}</h2>
             <input
               autoFocus
               value={newLongTermObjectTitle}
               onChange={(event) => setNewLongTermObjectTitle(event.target.value)}
-              placeholder="名称，例如：学习摄影"
+              placeholder={tr("名称，例如：学习摄影")}
             />
             <select
               value={newLongTermObjectKind}
@@ -2101,18 +1836,18 @@ export function TodoWorkspace(
                   event.target.value as LongTermObject["kind"],
                 )
               }
-              aria-label="长期对象类型"
+              aria-label={tr("长期对象类型")}
             >
-              <option value="兴趣">兴趣</option>
-              <option value="目标">目标</option>
-              <option value="长期想法">长期想法</option>
+              <option value="兴趣">{tr("兴趣")}</option>
+              <option value="目标">{tr("目标")}</option>
+              <option value="长期想法">{tr("长期想法")}</option>
             </select>
             <textarea
               value={newLongTermObjectDescription}
               onChange={(event) =>
                 setNewLongTermObjectDescription(event.target.value)
               }
-              placeholder="说明这个对象对你意味着什么（可选）"
+              placeholder={tr("说明这个对象对你意味着什么（可选）")}
               rows={4}
             />
             <div>
@@ -2124,9 +1859,9 @@ export function TodoWorkspace(
                   setNewLongTermObjectDescription("");
                 }}
               >
-                取消
+                {tr("取消")}
               </button>
-              <button type="submit">创建对象</button>
+              <button type="submit">{tr("创建对象")}</button>
             </div>
           </form>
         )}
@@ -2138,24 +1873,24 @@ export function TodoWorkspace(
               addRelatedTask();
             }}
           >
-            <span className="eyebrow">关联任务</span>
-            <h2>添加一项行动</h2>
+            <span className="eyebrow">{tr("关联任务")}</span>
+            <h2>{tr("添加一项行动")}</h2>
             <input
               autoFocus
               value={newRelatedTaskTitle}
               onChange={(event) => setNewRelatedTaskTitle(event.target.value)}
-              placeholder="任务名称"
+              placeholder={tr("任务名称")}
             />
             <textarea
               value={newRelatedTaskDetail}
               onChange={(event) => setNewRelatedTaskDetail(event.target.value)}
-              placeholder="任务内容（可选）"
+              placeholder={tr("任务内容（可选）")}
               rows={4}
             />
             <select
               value={newRelatedTaskPoolId}
               onChange={(event) => setNewRelatedTaskPoolId(event.target.value)}
-              aria-label="保存到任务池"
+              aria-label={tr("保存到任务池")}
             >
               {storeColumns.map((column) => (
                 <option key={column.id} value={column.id}>
@@ -2173,9 +1908,9 @@ export function TodoWorkspace(
                   setNewRelatedTaskPoolId("");
                 }}
               >
-                取消
+                {tr("取消")}
               </button>
-              <button type="submit">添加任务</button>
+              <button type="submit">{tr("添加任务")}</button>
             </div>
           </form>
         )}
@@ -2190,33 +1925,33 @@ export function TodoWorkspace(
     <main className={`app-shell ${transparentUi ? "transparent-ui" : ""}`}>
       <header className="topbar">
         <div className="brand-mark">
-          {brandIconSrc ? <img src={brandIconSrc} alt="" /> : "层"}
+          {brandIconSrc ? <img src={brandIconSrc} alt="" /> : tr("层")}
         </div>
         <div className="topbar-title">
-          <strong>{flipped ? "缓存工作台" : "白板"}</strong>
+          <strong>{flipped ? tr("缓存工作台") : tr("白板")}</strong>
         </div>
-        <div className="attention-path" aria-label="当前注意力流程">
-          <span className={!flipped ? "current" : ""}>1 白板</span>
+        <div className="attention-path" aria-label={tr("当前注意力流程")}>
+          <span className={!flipped ? "current" : ""}>{tr("1 白板")}</span>
           <i>—</i>
-          <span className={flipped ? "current" : ""}>2 工作台</span>
+          <span className={flipped ? "current" : ""}>{tr("2 工作台")}</span>
           <i>—</i>
-          <button onClick={() => setMode("storage")}>3–4 后台</button>
+          <button onClick={() => setMode("storage")}>{tr("3–4 后台")}</button>
         </div>
         <button
           className="icon-button appearance-toggle"
           onClick={() => setTransparentUi((value) => !value)}
-          aria-label={transparentUi ? "使用原始配色" : "使用透明配色"}
+          aria-label={transparentUi ? tr("使用原始配色") : tr("使用透明配色")}
           aria-pressed={transparentUi}
-          title={transparentUi ? "使用原始配色" : "使用透明配色"}
+          title={transparentUi ? tr("使用原始配色") : tr("使用透明配色")}
         >
           <Icon>{transparentUi ? "◐" : "◌"}</Icon>
         </button>
         <button
           className="flip-button"
           onClick={() => setFlipped((value) => !value)}
-          aria-label={flipped ? "翻回白板" : "翻到背面"}
+          aria-label={flipped ? tr("翻回白板") : tr("翻到背面")}
           aria-pressed={flipped}
-          title={flipped ? "翻回白板" : "翻到背面"}
+          title={flipped ? tr("翻回白板") : tr("翻到背面")}
         >
           <span className="flip-icon" aria-hidden="true">↻</span>
         </button>
@@ -2227,42 +1962,45 @@ export function TodoWorkspace(
       <div className="workspace-stage">
         <div className={`workspace-card ${flipped ? "is-flipped" : ""}`}>
           <section className="workspace-face workspace-front" aria-hidden={flipped}>
-            <div className="canvas-toolbar" aria-label="白板工具">
+            <div className="canvas-toolbar" aria-label={tr("白板工具")}>
               <button
                 className={canvasTool === "select" ? "active" : ""}
                 onClick={() => selectCanvasTool("select")}
-                aria-label="选择工具"
+                aria-label={tr("选择工具")}
                 aria-pressed={canvasTool === "select"}
-                title="选择并移动卡片"
+                title={tr("选择并移动卡片")}
               >
                 ↖
               </button>
               <button
                 className={canvasTool === "text" ? "active" : ""}
                 onClick={() => selectCanvasTool("text")}
-                aria-label="文本笔记工具"
+                aria-label={tr("文本笔记工具")}
                 aria-pressed={canvasTool === "text"}
-                data-tooltip="文本笔记：点击白板空白处添加"
-                title="文本笔记：点击白板空白处添加"
+                data-tooltip={tr("文本笔记：点击白板空白处添加")}
+                title={tr("文本笔记：点击白板空白处添加")}
               >
                 T
               </button>
               <button
                 className={canvasTool === "connect" ? "active" : ""}
                 onClick={() => selectCanvasTool("connect")}
-                aria-label="连线工具"
+                aria-label={tr("连线工具")}
                 aria-pressed={canvasTool === "connect"}
-                data-tooltip="连线：先点起点卡片，再点终点卡片"
-                title="连线：先点起点卡片，再点终点卡片"
+                data-tooltip={tr("连线：先点起点卡片，再点终点卡片")}
+                title={tr("连线：先点起点卡片，再点终点卡片")}
               >
                 ↗
               </button>
               <span />
-              <button onClick={() => showToast("当前缩放 100%")} aria-label="缩放">100%</button>
+              <button onClick={() => showToast(tr("当前缩放 100%"))} aria-label={tr("缩放")}>100%</button>
             </div>
             <div className="canvas-status">
               <span className="live-dot" />
-              正在处理 {canvasCards.filter((card) => !card.done).length} 项 · {canvasConnections.length} 条连线
+              {tr("正在处理 {tasks} 项 · {connections} 条连线", {
+                tasks: canvasCards.filter((card) => !card.done).length,
+                connections: canvasConnections.length,
+              })}
             </div>
             <div
               className={`whiteboard ${canvasTool === "text" ? "text-note-mode" : ""}`}
@@ -2271,24 +2009,24 @@ export function TodoWorkspace(
             >
               <div
                 className="canvas-file-actions"
-                aria-label="Canvas 文件操作"
+                aria-label={tr("Canvas 文件操作")}
                 onPointerDown={(event) => event.stopPropagation()}
               >
                 <button
                   onClick={openNativeCanvas}
-                  aria-label="同步并打开原生 Canvas"
-                  title="同步并打开原生 Canvas"
+                  aria-label={tr("同步并打开原生 Canvas")}
+                  title={tr("同步并打开原生 Canvas")}
                 >
                   <span aria-hidden="true">◫</span>
-                  官方 Canvas
+                  {tr("官方 Canvas")}
                 </button>
                 <button
                   onClick={openNativeCanvasLoader}
-                  aria-label="从白板文件夹加载 Canvas"
-                  title="从白板文件夹加载 Canvas"
+                  aria-label={tr("从白板文件夹加载 Canvas")}
+                  title={tr("从白板文件夹加载 Canvas")}
                 >
                   <span aria-hidden="true">⇩</span>
-                  加载 Canvas
+                  {tr("加载 Canvas")}
                 </button>
               </div>
               {pendingMove?.destination === "whiteboard" && (
@@ -2296,12 +2034,12 @@ export function TodoWorkspace(
                   className="whiteboard-move-target"
                   onClick={() => completeMove({ kind: "whiteboard" })}
                 >
-                  ＋ 点击这里，把“{pendingMove.task.title}”添加到白板
+                  {tr("＋ 点击这里，把“{title}”添加到白板", { title: pendingMove.task.title })}
                 </button>
               )}
               <svg
                 className="canvas-connections"
-                aria-label="任务连线"
+                aria-label={tr("任务连线")}
                 role="group"
               >
                 <defs>
@@ -2391,8 +2129,8 @@ export function TodoWorkspace(
                       setSelectedConnectionId(null);
                       setDeleteConnectionId(null);
                     }}
-                    aria-label="删除连线"
-                    title="删除连线"
+                    aria-label={tr("删除连线")}
+                    title={tr("删除连线")}
                     style={{
                       left: (coordinates.x1 + coordinates.x2) / 2,
                       top: (coordinates.y1 + coordinates.y2) / 2,
@@ -2437,8 +2175,8 @@ export function TodoWorkspace(
                       event.stopPropagation();
                       startCanvasConnection(card.id);
                     }}
-                    aria-label={`从“${card.title}”开始连线`}
-                    title="从此卡片开始连线"
+                    aria-label={tr("从“{title}”开始连线", { title: card.title })}
+                    title={tr("从此卡片开始连线")}
                   >
                     <Icon>↗</Icon>
                   </button>
@@ -2459,7 +2197,7 @@ export function TodoWorkspace(
                         )
                       }
                     >
-                      {card.done ? "✓ 已完成" : "○ 完成"}
+                      {card.done ? tr("✓ 已完成") : tr("○ 完成")}
                     </button>
                   </footer>
                 </article>
@@ -2485,7 +2223,7 @@ export function TodoWorkspace(
                       notes.filter((item) => item.id !== note.id),
                     );
                   }}
-                  title="双击编辑，右键删除"
+                  title={tr("双击编辑，右键删除")}
                 >
                   {note.content}
                 </article>
@@ -2498,22 +2236,22 @@ export function TodoWorkspace(
                     addCanvasTask();
                   }}
                 >
-                  <span className="eyebrow">添加到白板</span>
+                  <span className="eyebrow">{tr("添加到白板")}</span>
                   <input
                     autoFocus
                     value={newTaskTitle}
                     onChange={(event) => setNewTaskTitle(event.target.value)}
-                    placeholder="任务名称"
+                    placeholder={tr("任务名称")}
                   />
                   <textarea
                     value={newTaskDetail}
                     onChange={(event) => setNewTaskDetail(event.target.value)}
-                    placeholder="任务内容（可选）"
+                    placeholder={tr("任务内容（可选）")}
                     rows={4}
                   />
                   <div>
-                    <button type="button" onClick={() => setAddingTask(false)}>取消</button>
-                    <button type="submit">加入白板</button>
+                    <button type="button" onClick={() => setAddingTask(false)}>{tr("取消")}</button>
+                    <button type="submit">{tr("加入白板")}</button>
                   </div>
                 </form>
               )}
@@ -2527,13 +2265,13 @@ export function TodoWorkspace(
                   }}
                 >
                   <span className="eyebrow">
-                    {editingTextNoteId ? "编辑文本笔记" : "添加文本笔记"}
+                    {editingTextNoteId ? tr("编辑文本笔记") : tr("添加文本笔记")}
                   </span>
                   <textarea
                     autoFocus
                     value={newTextNoteContent}
                     onChange={(event) => setNewTextNoteContent(event.target.value)}
-                    placeholder="写下要保留的文本…"
+                    placeholder={tr("写下要保留的文本…")}
                     rows={5}
                   />
                   <div>
@@ -2541,10 +2279,10 @@ export function TodoWorkspace(
                       type="button"
                       onClick={cancelTextNoteForm}
                     >
-                      取消
+                      {tr("取消")}
                     </button>
                     <button type="submit">
-                      {editingTextNoteId ? "保存修改" : "添加笔记"}
+                      {editingTextNoteId ? tr("保存修改") : tr("添加笔记")}
                     </button>
                   </div>
                 </form>
@@ -2563,12 +2301,12 @@ export function TodoWorkspace(
           <section className="workspace-face workspace-back" aria-hidden={!flipped}>
             <div className="workbench-main">
               <WorkbenchColumn
-                title="收集箱"
-                subtitle="先接住，还没有判断"
+                title={tr("收集箱")}
+                subtitle={tr("先接住，还没有判断")}
                 items={inbox}
                 tone="inbox"
-                aiLabel="整理收集箱"
-                onAi={() => showToast("AI 接口已预留：整理收集箱")}
+                aiLabel={tr("整理收集箱")}
+                onAi={() => showToast(tr("AI 接口已预留：整理收集箱"))}
                 origin={{ kind: "inbox" }}
                 isMoveTarget={pendingMove?.destination === "workbench"}
                 onChooseTarget={() => completeMove({ kind: "workbench", list: "inbox" })}
@@ -2581,12 +2319,12 @@ export function TodoWorkspace(
                 onOpenTask={openTaskNote}
               />
               <WorkbenchColumn
-                title="待办列表"
-                subtitle="想找时间开始的事情"
+                title={tr("待办列表")}
+                subtitle={tr("想找时间开始的事情")}
                 items={todo}
                 tone="todo"
-                aiLabel="提取待办列表"
-                onAi={() => showToast("AI 接口已预留：提取待办列表")}
+                aiLabel={tr("提取待办列表")}
+                onAi={() => showToast(tr("AI 接口已预留：提取待办列表"))}
                 origin={{ kind: "todo" }}
                 isMoveTarget={pendingMove?.destination === "workbench"}
                 onChooseTarget={() => completeMove({ kind: "workbench", list: "todo" })}
@@ -2599,12 +2337,12 @@ export function TodoWorkspace(
                 onOpenTask={openTaskNote}
               />
               <WorkbenchColumn
-                title="缓存列表"
-                subtitle="做过一部分，等待恢复"
+                title={tr("缓存列表")}
+                subtitle={tr("做过一部分，等待恢复")}
                 items={cache}
                 tone="cache"
-                aiLabel="清理缓存列表"
-                onAi={() => showToast("AI 接口已预留：清理缓存列表")}
+                aiLabel={tr("清理缓存列表")}
+                onAi={() => showToast(tr("AI 接口已预留：清理缓存列表"))}
                 origin={{ kind: "cache" }}
                 isMoveTarget={pendingMove?.destination === "workbench"}
                 onChooseTarget={() => completeMove({ kind: "workbench", list: "cache" })}
@@ -2620,9 +2358,9 @@ export function TodoWorkspace(
             <section className="storage-preview">
               <div className="storage-preview-heading">
                 <div>
-                  <span className="eyebrow">后台简略视图</span>
-                  <h2>任务存储器</h2>
-                  <p>全部任务仍然可见，但退到当前注意力之后。</p>
+                  <span className="eyebrow">{tr("后台简略视图")}</span>
+                  <h2>{tr("任务存储器")}</h2>
+                  <p>{tr("全部任务仍然可见，但退到当前注意力之后。")}</p>
                 </div>
                 <div className="preview-actions">
                   <button
@@ -2632,7 +2370,7 @@ export function TodoWorkspace(
                       setMode("storage");
                     }}
                   >
-                    进入任务存储器 →
+                    {tr("进入任务存储器 →")}
                   </button>
                 </div>
               </div>
@@ -2648,7 +2386,7 @@ export function TodoWorkspace(
                     <i className={`pool-dot ${column.tone}`} />
                     <span>
                       <strong>{column.title}</strong>
-                      <small>{column.tasks[0]?.title ?? "空任务池"}</small>
+                      <small>{column.tasks[0]?.title ?? tr("空任务池")}</small>
                     </span>
                     <b>{column.tasks.length}</b>
                   </button>
@@ -2664,13 +2402,13 @@ export function TodoWorkspace(
         <section
           className="dialog-card native-canvas-loader"
           role="dialog"
-          aria-label="从白板文件夹加载 Canvas"
+          aria-label={tr("从白板文件夹加载 Canvas")}
         >
-          <span className="eyebrow">白板文件夹</span>
-          <h2>加载原生 Canvas</h2>
+          <span className="eyebrow">{tr("白板文件夹")}</span>
+          <h2>{tr("加载原生 Canvas")}</h2>
           <div className="native-canvas-list">
             {loadingNativeCanvases ? (
-              <span>正在读取 Canvas 文件</span>
+              <span>{tr("正在读取 Canvas 文件")}</span>
             ) : nativeCanvasFiles.length ? (
               nativeCanvasFiles.map((file) => (
                 <button
@@ -2684,12 +2422,12 @@ export function TodoWorkspace(
                 </button>
               ))
             ) : (
-              <span>白板文件夹中没有 Canvas 文件</span>
+              <span>{tr("白板文件夹中没有 Canvas 文件")}</span>
             )}
           </div>
           <div>
             <button type="button" onClick={() => setShowNativeCanvasLoader(false)}>
-              取消
+              {tr("取消")}
             </button>
           </div>
         </section>
@@ -2717,16 +2455,16 @@ function TaskQuickActions({
       <button
         type="button"
         onClick={() => onEdit(task)}
-        aria-label={`编辑任务：${task.title}`}
-        title="编辑任务内容"
+        aria-label={tr("编辑任务：{title}", { title: task.title })}
+        title={tr("编辑任务内容")}
       >
         <Icon>✎</Icon>
       </button>
       <button
         type="button"
         onClick={() => onOpen(task)}
-        aria-label={`打开 Markdown：${task.title}`}
-        title="打开对应 Markdown 笔记"
+        aria-label={tr("打开 Markdown：{title}", { title: task.title })}
+        title={tr("打开对应 Markdown 笔记")}
       >
         <Icon>↗</Icon>
       </button>
@@ -2761,7 +2499,7 @@ function TaskMenu({
       <button
         type="button"
         className="task-menu-trigger"
-        aria-label={`移动${task.title}`}
+        aria-label={tr("移动{title}", { title: task.title })}
         aria-expanded={open}
         onClick={() => setOpenMenuId(open ? null : task.id)}
       >
@@ -2769,18 +2507,18 @@ function TaskMenu({
       </button>
       {open && (
         <div className="task-menu-popover">
-          <span>移动到哪里？</span>
-          <button type="button" onClick={() => beginMove(task, origin, "whiteboard")}>白板</button>
-          <button type="button" onClick={() => beginMove(task, origin, "workbench")}>缓存工作台</button>
-          <button type="button" onClick={() => beginMove(task, origin, "storage")}>任务存储器</button>
+          <span>{tr("移动到哪里？")}</span>
+          <button type="button" onClick={() => beginMove(task, origin, "whiteboard")}>{tr("白板")}</button>
+          <button type="button" onClick={() => beginMove(task, origin, "workbench")}>{tr("缓存工作台")}</button>
+          <button type="button" onClick={() => beginMove(task, origin, "storage")}>{tr("任务存储器")}</button>
           {task.linkedNotePath ? (
             <button type="button" onClick={() => beginMove(task, origin, "unlink")}>
-              取消链接
+              {tr("取消链接")}
             </button>
           ) : (
             <>
-              <button type="button" onClick={() => beginMove(task, origin, "archive")}>归档</button>
-              <button type="button" onClick={() => beginMove(task, origin, "delete")}>删除</button>
+              <button type="button" onClick={() => beginMove(task, origin, "archive")}>{tr("归档")}</button>
+              <button type="button" onClick={() => beginMove(task, origin, "delete")}>{tr("删除")}</button>
             </>
           )}
         </div>
@@ -2886,7 +2624,7 @@ function WorkbenchColumn({
       </header>
       {isMoveTarget && (
         <button className="choose-target-button" onClick={onChooseTarget}>
-          添加到“{title}”
+          {tr("添加到“{title}”", { title })}
         </button>
       )}
       <div className="workbench-stack" ref={stackRef}>
@@ -2908,12 +2646,12 @@ function WorkbenchColumn({
               onOpen={onOpenTask}
             />
             <div className="card-kicker">
-              <span>{task.meta ?? "未分类"}</span>
+              <span>{task.meta ?? tr("未分类")}</span>
             </div>
             <h3>{task.title}</h3>
             <p>{task.detail}</p>
             <footer>
-              <span>{task.linkedNotePath ? "双链笔记" : "Markdown 待办"}</span>
+              <span>{task.linkedNotePath ? tr("双链笔记") : tr("Markdown 待办")}</span>
             </footer>
           </article>
         ))}
@@ -2929,17 +2667,17 @@ function WorkbenchColumn({
               autoFocus
               value={newTaskTitle}
               onChange={(event) => setNewTaskTitle(event.target.value)}
-              placeholder="任务名称"
+              placeholder={tr("任务名称")}
             />
             <textarea
               value={newTaskDetail}
               onChange={(event) => setNewTaskDetail(event.target.value)}
-              placeholder="任务内容（可选）"
+              placeholder={tr("任务内容（可选）")}
               rows={3}
             />
             <div className="inline-add-actions">
-              <button type="button" onClick={() => setAddingTask(false)}>取消</button>
-              <button type="submit">添加</button>
+              <button type="button" onClick={() => setAddingTask(false)}>{tr("取消")}</button>
+              <button type="submit">{tr("添加")}</button>
             </div>
           </form>
         ) : (
@@ -2999,12 +2737,12 @@ function LongTermObjects({
     <>
       <div className="storage-heading">
         <div>
-          <span className="eyebrow">方向与关联</span>
-          <h1>长期对象</h1>
-          <p>它们不是普通任务，而是产生任务、解释推荐并长期演化的方向。</p>
+          <span className="eyebrow">{tr("方向与关联")}</span>
+          <h1>{tr("长期对象")}</h1>
+          <p>{tr("它们不是普通任务，而是产生任务、解释推荐并长期演化的方向。")}</p>
         </div>
         <button className="primary-button" onClick={onAddObject}>
-          ＋ 新建长期对象
+          {tr("＋ 新建长期对象")}
         </button>
       </div>
       {selected ? (
@@ -3013,13 +2751,13 @@ function LongTermObjects({
             <button
               className="related-back-button"
               onClick={() => setSelectedObjectId(null)}
-              aria-label="返回全部对象"
-              title="返回全部对象"
+              aria-label={tr("返回全部对象")}
+              title={tr("返回全部对象")}
             >
               <Icon>←</Icon>
             </button>
             <div className="related-object-heading">
-              <span className="eyebrow">{selected.kind} · 关联任务</span>
+              <span className="eyebrow">{tr("{kind} · 关联任务", { kind: tr(selected.kind) })}</span>
               <h2>{selected.title}</h2>
               <p>{selected.description}</p>
             </div>
@@ -3048,7 +2786,7 @@ function LongTermObjects({
                     onOpen={onOpenTask}
                   />
                   <div className="card-kicker">
-                    <span>{task.priority ?? task.meta ?? "关联任务"}</span>
+                    <span>{task.priority ?? task.meta ?? tr("关联任务")}</span>
                   </div>
                   <h3>{task.title}</h3>
                   <p>{task.detail}</p>
@@ -3056,8 +2794,8 @@ function LongTermObjects({
               ))
             ) : (
               <div className="empty-related">
-                <strong>还没有关联任务</strong>
-                <p>以后可在任务编辑器中把任务关联到这个长期对象。</p>
+                <strong>{tr("还没有关联任务")}</strong>
+                <p>{tr("以后可在任务编辑器中把任务关联到这个长期对象。")}</p>
               </div>
             )}
           </div>
@@ -3065,10 +2803,10 @@ function LongTermObjects({
       ) : (
         <>
           <div className="object-summary">
-            <div><strong>{objects.filter((x) => x.kind === "兴趣").length}</strong><span>兴趣</span></div>
-            <div><strong>{objects.filter((x) => x.kind === "目标").length}</strong><span>长期目标</span></div>
-            <div><strong>{objects.filter((x) => x.kind === "长期想法").length}</strong><span>长期想法</span></div>
-            <p>点击任意对象，可以查看它当前关联的任务。</p>
+            <div><strong>{objects.filter((x) => x.kind === "兴趣").length}</strong><span>{tr("兴趣")}</span></div>
+            <div><strong>{objects.filter((x) => x.kind === "目标").length}</strong><span>{tr("长期目标")}</span></div>
+            <div><strong>{objects.filter((x) => x.kind === "长期想法").length}</strong><span>{tr("长期想法")}</span></div>
+            <p>{tr("点击任意对象，可以查看它当前关联的任务。")}</p>
           </div>
           <div className="object-grid">
             {objects.map((object) => {
@@ -3080,17 +2818,17 @@ function LongTermObjects({
               return (
                 <article className={`object-card ${object.tone}`} key={object.id}>
                   <header>
-                    <span>{object.kind}</span>
-                    <span>{count} 项关联</span>
+                    <span>{tr(object.kind)}</span>
+                    <span>{tr("{count} 项关联", { count })}</span>
                   </header>
                   <h2>{object.title}</h2>
                   <p>{object.description}</p>
                   <div className="object-links">
-                    <span>◎ {count} 个关联任务</span>
+                    <span>{tr("◎ {count} 个关联任务", { count })}</span>
                     <small>{object.activity}</small>
                   </div>
                   <button onClick={() => setSelectedObjectId(object.id)}>
-                    查看关联任务 →
+                    {tr("查看关联任务 →")}
                   </button>
                 </article>
               );
@@ -3103,11 +2841,11 @@ function LongTermObjects({
 }
 
 function originLabel(origin: TaskOrigin) {
-  if (origin.kind === "canvas") return "白板";
-  if (origin.kind === "inbox") return "收集箱";
-  if (origin.kind === "todo") return "待办列表";
-  if (origin.kind === "cache") return "缓存列表";
-  return "任务存储器";
+  if (origin.kind === "canvas") return tr("白板");
+  if (origin.kind === "inbox") return tr("收集箱");
+  if (origin.kind === "todo") return tr("待办列表");
+  if (origin.kind === "cache") return tr("缓存列表");
+  return tr("任务存储器");
 }
 
 function targetName(
@@ -3117,13 +2855,13 @@ function targetName(
     | { kind: "storage"; columnId: string },
   columns: StoreColumn[],
 ) {
-  if (target.kind === "whiteboard") return "白板";
+  if (target.kind === "whiteboard") return tr("白板");
   if (target.kind === "workbench") {
     return target.list === "inbox"
-      ? "收集箱"
+      ? tr("收集箱")
       : target.list === "todo"
-        ? "待办列表"
-        : "缓存列表";
+        ? tr("待办列表")
+        : tr("缓存列表");
   }
-  return columns.find((column) => column.id === target.columnId)?.title ?? "任务池";
+  return columns.find((column) => column.id === target.columnId)?.title ?? tr("任务池");
 }

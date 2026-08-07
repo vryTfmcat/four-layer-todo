@@ -1,6 +1,6 @@
 {
   "name": "four-layer-todo",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "description": "Four-layer attention-based task workspace for Obsidian.",
   "main": "main.js",
@@ -15,7 +15,7 @@
     "install:local": "node scripts/install-local.mjs"
   },
   "dependencies": {
-    "preact": "^10.27.2"
+    "preact": "10.29.8"
   },
   "devDependencies": {
     "@types/node": "22.20.1",
