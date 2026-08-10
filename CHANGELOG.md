@@ -10,6 +10,8 @@
   backlink while moving and opening the managed task card instead of the source.
 - Clean up repeated generated backlinks and legacy self-referencing task links
   during synchronization.
+- Keep numeric Obsidian Sync conflict filenames stable instead of feeding
+  suffixes such as `2` back into task titles or another rename cycle.
 - Archive a linked-note task card when unlinking it, without moving or deleting
   the original note.
 

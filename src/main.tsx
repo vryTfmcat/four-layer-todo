@@ -31,6 +31,12 @@ import {
   type AppLocale,
   type LanguageSetting,
 } from "./i18n";
+import {
+  chooseStableMarkdownPath,
+  isNumericConflictBasename,
+  renameOperationKey,
+  stableTaskFileStem,
+} from "./syncGuards";
 
 const VIEW_TYPE = "four-layer-todo-workspace";
 const NATIVE_CANVAS_FILE_NAME = "任务白板.canvas";
@@ -577,6 +583,7 @@ function serializeLongTermObjectNote(object: LongTermObject): string {
     "---",
     "fourLayerTodoObject: true",
     `id: ${markdownValue(object.id)}`,
+    `title: ${markdownValue(object.title)}`,
     `kind: ${markdownValue(object.kind)}`,
     `activity: ${markdownValue(object.activity)}`,
     `tone: ${markdownValue(object.tone)}`,
@@ -715,7 +722,7 @@ function parseLongTermObjectNote(
   return {
     id,
     kind,
-    title: fileTitle || tr("未命名长期对象"),
+    title: getString(frontmatter.title) ?? (fileTitle || tr("未命名长期对象")),
     description: description || tr("暂无说明。"),
     activity: getString(frontmatter.activity) ?? tr("等待关联任务"),
     tone: getString(frontmatter.tone) ?? defaultTone,
@@ -724,12 +731,7 @@ function parseLongTermObjectNote(
 }
 
 function taskFileStem(title: string): string {
-  const stem = title
-    .replace(/[\\/:*?"<>|]/g, "-")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 80);
-  return stem || tr("未命名待办");
+  return stableTaskFileStem(title, tr("未命名待办"));
 }
 
 function archiveDateFolder(date = new Date()): string {
@@ -1023,9 +1025,9 @@ export default class FourLayerTodoPlugin extends Plugin {
   private readonly longTermObjectPaths = new Map<string, string>();
   private readonly pendingMarkdownWrites = new Map<string, string>();
   private readonly pendingNativeCanvasWrites = new Map<string, string>();
-  // Obsidian emits rename events for the plugin's own folder/title sync. Those
-  // events must not be re-imported as user edits, or collision suffixes become
-  // task titles and trigger another sync cycle.
+  // Obsidian emits rename events for the plugin's own folder/title sync. Track
+  // exact old/new path pairs so unrelated Sync conflict renames are never
+  // mistaken for plugin writes and fed back into another rename cycle.
   private readonly pendingMarkdownRenames = new Set<string>();
   private workspaceSaveQueue: Promise<void> = Promise.resolve();
   private markdownEventQueue: Promise<void> = Promise.resolve();
@@ -1127,8 +1129,9 @@ export default class FourLayerTodoPlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
         if (file instanceof TFile) {
+          const newPath = file.path;
           this.queueMarkdownEvent(() =>
-            this.updateRenamedMarkdownNote(file, oldPath),
+            this.updateRenamedMarkdownNote(file, oldPath, newPath),
           );
         }
         if (file instanceof TFolder) {
@@ -1278,7 +1281,11 @@ export default class FourLayerTodoPlugin extends Plugin {
           record.task.id,
         );
         this.taskPaths.set(record.task.id, file.path);
-        if (known.content !== content) {
+        const currentContent =
+          file.path === known.file.path
+            ? known.content
+            : await this.app.vault.read(file);
+        if (currentContent !== content) {
           await this.writeMarkdownTask(file, content);
         }
         continue;
@@ -1304,7 +1311,11 @@ export default class FourLayerTodoPlugin extends Plugin {
           object.title,
         );
         this.longTermObjectPaths.set(object.id, file.path);
-        if (known.content !== content) {
+        const currentContent =
+          file.path === known.file.path
+            ? known.content
+            : await this.app.vault.read(file);
+        if (currentContent !== content) {
           await this.writeMarkdownTask(file, content);
         }
         continue;
@@ -2026,6 +2037,15 @@ export default class FourLayerTodoPlugin extends Plugin {
 
   private async indexMarkdownTasks(folder: string): Promise<Map<string, IndexedMarkdownTask>> {
     const notes = new Map<string, IndexedMarkdownTask>();
+    const expectedFolders = new Map<string, string>();
+    if (this.workspaceState) {
+      for (const record of getTaskRecords(this.workspaceState)) {
+        expectedFolders.set(
+          record.task.id,
+          getTaskFolder(folder, record, this.workspaceState),
+        );
+      }
+    }
     const files = this.app.vault
       .getMarkdownFiles()
       .filter(
@@ -2041,7 +2061,38 @@ export default class FourLayerTodoPlugin extends Plugin {
       if (!task) continue;
       const known = notes.get(task.id);
       const trackedPath = this.taskPaths.get(task.id);
-      if (!known || file.path === trackedPath) {
+      if (!known) {
+        notes.set(task.id, { file, content });
+        continue;
+      }
+
+      console.warn(
+        `四层待办: duplicate task id ${task.id}`,
+        known.file.path,
+        file.path,
+      );
+      const expectedFolder = expectedFolders.get(task.id);
+      const rank = (candidate: TFile): number => {
+        if (candidate.path === trackedPath) return 0;
+        if (expectedFolder && candidate.parent?.path === expectedFolder) return 1;
+        if (candidate.basename === taskFileStem(task.title)) return 2;
+        if (
+          isNumericConflictBasename(
+            candidate.basename,
+            task.title,
+            tr("未命名待办"),
+          )
+        ) {
+          return 3;
+        }
+        return 4;
+      };
+      const knownRank = rank(known.file);
+      const candidateRank = rank(file);
+      if (
+        candidateRank < knownRank ||
+        (candidateRank === knownRank && file.path < known.file.path)
+      ) {
         notes.set(task.id, { file, content });
       }
     }
@@ -2097,7 +2148,40 @@ export default class FourLayerTodoPlugin extends Plugin {
       const content = await this.app.vault.read(file);
       const object = parseLongTermObjectNote(content, file.basename);
       if (!object) continue;
-      notes.set(object.id, { file, content });
+      const known = notes.get(object.id);
+      if (!known) {
+        notes.set(object.id, { file, content });
+        continue;
+      }
+
+      console.warn(
+        `四层待办: duplicate long-term object id ${object.id}`,
+        known.file.path,
+        file.path,
+      );
+      const trackedPath = this.longTermObjectPaths.get(object.id);
+      const rank = (candidate: TFile): number => {
+        if (candidate.path === trackedPath) return 0;
+        if (candidate.basename === taskFileStem(object.title)) return 1;
+        if (
+          isNumericConflictBasename(
+            candidate.basename,
+            object.title,
+            tr("未命名长期对象"),
+          )
+        ) {
+          return 2;
+        }
+        return 3;
+      };
+      const knownRank = rank(known.file);
+      const candidateRank = rank(file);
+      if (
+        candidateRank < knownRank ||
+        (candidateRank === knownRank && file.path < known.file.path)
+      ) {
+        notes.set(object.id, { file, content });
+      }
     }
     return notes;
   }
@@ -2134,13 +2218,12 @@ export default class FourLayerTodoPlugin extends Plugin {
     const targetPath = this.getAvailableTaskPath(folder, title, oldPath);
     if (oldPath === targetPath) return file;
 
-    this.pendingMarkdownRenames.add(oldPath);
-    this.pendingMarkdownRenames.add(targetPath);
+    const renameKey = renameOperationKey(oldPath, targetPath);
+    this.pendingMarkdownRenames.add(renameKey);
     try {
       await this.app.vault.rename(file, targetPath);
     } catch (error) {
-      this.pendingMarkdownRenames.delete(oldPath);
-      this.pendingMarkdownRenames.delete(targetPath);
+      this.pendingMarkdownRenames.delete(renameKey);
       throw error;
     }
     const pendingContent = this.pendingMarkdownWrites.get(oldPath);
@@ -2157,19 +2240,21 @@ export default class FourLayerTodoPlugin extends Plugin {
     title: string,
     currentPath?: string,
   ): string {
-    const stem = taskFileStem(title);
-    let path = `${folder}/${stem}.md`;
-    let suffix = 2;
+    return chooseStableMarkdownPath(
+      folder,
+      title,
+      currentPath,
+      (path) => Boolean(this.app.vault.getAbstractFileByPath(path)),
+      tr("未命名待办"),
+    );
+  }
 
-    while (
-      this.app.vault.getAbstractFileByPath(path) &&
-      path !== currentPath
-    ) {
-      path = `${folder}/${stem} ${suffix}.md`;
-      suffix += 1;
-    }
-
-    return path;
+  private hasCanonicalMarkdownCollision(file: TFile, title: string): boolean {
+    const folder = file.parent?.path;
+    if (!folder) return false;
+    const canonicalPath = `${folder}/${taskFileStem(title)}.md`;
+    return canonicalPath !== file.path &&
+      Boolean(this.app.vault.getAbstractFileByPath(canonicalPath));
   }
 
   private async writeMarkdownTask(file: TFile, content: string): Promise<void> {
@@ -2360,7 +2445,10 @@ export default class FourLayerTodoPlugin extends Plugin {
     this.emitWorkspace();
   }
 
-  private async importMarkdownNote(file: TFile): Promise<void> {
+  private async importMarkdownNote(
+    file: TFile,
+    titleOverride?: string,
+  ): Promise<void> {
     if (!this.settings.markdownSyncEnabled || !this.isManagedMarkdownNote(file)) {
       return;
     }
@@ -2388,6 +2476,7 @@ export default class FourLayerTodoPlugin extends Plugin {
     const markdownTask = parseTaskNote(content, file.basename, file.path);
     if (!markdownTask || !this.workspaceState) return;
     if (isLegacySampleId(markdownTask.id)) return;
+    if (titleOverride) markdownTask.title = titleOverride;
 
     const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
     const placed = this.placeMarkdownTaskFromPath(
@@ -2428,24 +2517,44 @@ export default class FourLayerTodoPlugin extends Plugin {
   private async updateRenamedMarkdownNote(
     file: TFile,
     oldPath: string,
+    eventNewPath: string,
   ): Promise<void> {
-    const isPluginRename =
-      this.pendingMarkdownRenames.has(oldPath) ||
-      this.pendingMarkdownRenames.has(file.path);
-    this.pendingMarkdownRenames.delete(oldPath);
-    this.pendingMarkdownRenames.delete(file.path);
+    const renameKey = renameOperationKey(oldPath, eventNewPath);
+    const isPluginRename = this.pendingMarkdownRenames.delete(renameKey);
     if (isPluginRename) {
       return;
     }
+    // A later rename may mutate the same TFile object before this queued event
+    // runs. Ignore the stale event; the later event owns the final path.
+    if (file.path !== eventNewPath) return;
 
     for (const [taskId, path] of this.taskPaths) {
       if (path !== oldPath) continue;
+      const currentTask = this.workspaceState
+        ? getTaskRecords(this.workspaceState).find(
+            (record) => record.task.id === taskId,
+          )?.task
+        : undefined;
+      const preserveTitle = currentTask
+        ? this.hasCanonicalMarkdownCollision(file, currentTask.title) &&
+          isNumericConflictBasename(
+            file.basename,
+            currentTask.title,
+            tr("未命名待办"),
+          )
+        : false;
       this.taskPaths.set(taskId, file.path);
       if (this.isArchivedMarkdownPath(file.path)) {
         this.taskPaths.delete(taskId);
         return;
       }
-      await this.importMarkdownNote(file);
+      await this.importMarkdownNote(
+        file,
+        preserveTitle ? undefined : file.basename,
+      );
+      if (!preserveTitle && this.isManagedMarkdownNote(file)) {
+        await this.syncWorkspaceToMarkdown();
+      }
       return;
     }
 
@@ -2454,12 +2563,28 @@ export default class FourLayerTodoPlugin extends Plugin {
       this.longTermObjectPaths.set(objectId, file.path);
       if (!this.workspaceState) return;
 
+      const currentObject = (this.workspaceState.longTermObjects ?? []).find(
+        (object) => object.id === objectId,
+      );
+      if (
+        currentObject &&
+        this.hasCanonicalMarkdownCollision(file, currentObject.title) &&
+        isNumericConflictBasename(
+          file.basename,
+          currentObject.title,
+          tr("未命名长期对象"),
+        )
+      ) {
+        return;
+      }
+
       this.workspaceState = this.renameLongTermObject(
         this.workspaceState,
         objectId,
         file.basename,
       );
       await this.persistWorkspace();
+      await this.syncWorkspaceToMarkdown();
       this.emitWorkspace();
       return;
     }
@@ -2467,27 +2592,6 @@ export default class FourLayerTodoPlugin extends Plugin {
     if (!this.isArchivedMarkdownPath(file.path)) {
       await this.importMarkdownNote(file);
     }
-  }
-
-  private renameTask(
-    state: WorkspaceState,
-    taskId: string,
-    title: string,
-  ): WorkspaceState {
-    const rename = <T extends TaskItem>(task: T): T =>
-      task.id === taskId ? { ...task, title } : task;
-
-    return {
-      ...clone(state),
-      canvasCards: state.canvasCards.map(rename),
-      inbox: state.inbox.map(rename),
-      todo: state.todo.map(rename),
-      cache: state.cache.map(rename),
-      storeColumns: state.storeColumns.map((column) => ({
-        ...column,
-        tasks: column.tasks.map(rename),
-      })),
-    };
   }
 
   private renameLongTermObject(
