@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.9
+
+- Give every synchronized card, including whiteboard and linked-note cards, a
+  managed Markdown file keyed by its stable task ID.
+- Reconcile native Canvas file nodes with task IDs and move managed task files
+  to the layer selected in Canvas without duplicating cards across layers.
+- Preserve links to original notes in task frontmatter and a single generated
+  backlink while moving and opening the managed task card instead of the source.
+- Clean up repeated generated backlinks and legacy self-referencing task links
+  during synchronization.
+- Archive a linked-note task card when unlinking it, without moving or deleting
+  the original note.
+
 ## 0.1.8
 
 - Declare the Obsidian 1.13.0 minimum required by the settings and file APIs.

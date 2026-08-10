@@ -114,6 +114,7 @@ export type WorkspaceStorage = {
   save: (state: WorkspaceState) => Promise<void> | void;
   subscribe?: (listener: (state: Partial<WorkspaceState>) => void) => () => void;
   archiveTask?: (taskId: string) => Promise<void> | void;
+  isMarkdownSyncEnabled?: () => boolean;
   deleteTask?: (taskId: string) => Promise<void> | void;
   searchNotes?: (query: string) => Promise<LinkedNoteSuggestion[]>;
   moveTaskNote?: (path: string, target: NoteTaskTarget) => Promise<void> | void;
@@ -709,8 +710,22 @@ export function TodoWorkspace(
       return;
     }
     if (destination === "unlink") {
-      removeFromOrigin(origin, task.id);
-      showToast(tr("已取消“{title}”的笔记链接", { title: task.title }));
+      if (storage?.isMarkdownSyncEnabled?.() === false) {
+        removeFromOrigin(origin, task.id);
+        showToast(tr("已取消“{title}”的笔记链接", { title: task.title }));
+        return;
+      }
+      if (!storage?.archiveTask) {
+        showToast(tr("归档仅在 Obsidian 插件中可用"));
+        return;
+      }
+      try {
+        await storage.archiveTask(task.id);
+        removeFromOrigin(origin, task.id);
+        showToast(tr("已取消“{title}”的链接并归档卡片", { title: task.title }));
+      } catch {
+        showToast(tr("归档“{title}”失败", { title: task.title }));
+      }
       return;
     }
     setPendingMove({ task, origin, destination });
@@ -760,19 +775,6 @@ export function TodoWorkspace(
         : target.kind === "workbench"
           ? { location: target.list }
           : { location: "storage", columnId: target.columnId };
-    if (pendingMove.task.linkedNotePath && storage?.moveTaskNote) {
-      try {
-        await storage.moveTaskNote(pendingMove.task.linkedNotePath, noteTarget);
-        showToast(tr("已将“{title}”移动到{destination}", {
-          title: pendingMove.task.title,
-          destination: targetName(target, storeColumns),
-        }));
-        setPendingMove(null);
-      } catch {
-        showToast(tr("移动“{title}”失败", { title: pendingMove.task.title }));
-      }
-      return;
-    }
     if (storage?.moveTaskById) {
       try {
         const moved = await storage.moveTaskById(pendingMove.task.id, noteTarget);
@@ -996,7 +998,7 @@ export function TodoWorkspace(
     const task: TaskItem = {
       id: taskId,
       title: note.title,
-      detail: `[[${note.title}]]`,
+      detail: "",
       source: "笔记",
       meta: tr("双链笔记"),
       priority: "P3",
@@ -1053,14 +1055,12 @@ export function TodoWorkspace(
   };
 
   const openTaskNote = (task: TaskItem) => {
-    const handler = task.linkedNotePath ? storage?.openNote : storage?.openTaskNote;
+    const handler = storage?.openTaskNote;
     if (!handler) {
       showToast(tr("没有找到对应的 Markdown 笔记"));
       return;
     }
-    const action = task.linkedNotePath
-      ? handler(task.linkedNotePath)
-      : handler(task.id);
+    const action = handler(task.id);
     void Promise.resolve(action).catch(() =>
       showToast(tr("打开“{title}”的 Markdown 笔记失败", { title: task.title })),
     );
@@ -2513,7 +2513,7 @@ function TaskMenu({
           <button type="button" onClick={() => beginMove(task, origin, "storage")}>{tr("任务存储器")}</button>
           {task.linkedNotePath ? (
             <button type="button" onClick={() => beginMove(task, origin, "unlink")}>
-              {tr("取消链接")}
+              {tr("取消链接并归档")}
             </button>
           ) : (
             <>
@@ -2651,7 +2651,7 @@ function WorkbenchColumn({
             <h3>{task.title}</h3>
             <p>{task.detail}</p>
             <footer>
-              <span>{task.linkedNotePath ? tr("双链笔记") : tr("Markdown 待办")}</span>
+              <span>{task.linkedNotePath ? tr("链接卡片") : tr("Markdown 待办")}</span>
             </footer>
           </article>
         ))}
