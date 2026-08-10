@@ -1,6 +1,6 @@
 {
   "name": "four-layer-todo",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "private": true,
   "description": "Four-layer attention-based task workspace for Obsidian.",
   "main": "main.js",
@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+    "test": "node --experimental-default-type=module --test scripts/syncGuards.test.mjs",
     "dev": "node esbuild.config.mjs",
     "install:local": "node scripts/install-local.mjs"
   },
