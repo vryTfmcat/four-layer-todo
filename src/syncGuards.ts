@@ -22,6 +22,26 @@ export function renameOperationKey(oldPath: string, newPath: string): string {
   return `${oldPath}\u0000${newPath}`;
 }
 
+export function stripGeneratedLinkedNoteBacklinks(value: string): string {
+  const lines = value.split(/\r?\n/);
+  const kept: string[] = [];
+  let removedGeneratedLink = false;
+
+  for (const line of lines) {
+    if (/^\s*\[\[[^\r\n]*\|关联原笔记\]\]\s*$/.test(line)) {
+      removedGeneratedLink = true;
+      continue;
+    }
+    if (removedGeneratedLink && line.trim() === "]") {
+      continue;
+    }
+    if (line.trim()) removedGeneratedLink = false;
+    kept.push(line);
+  }
+
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function chooseStableMarkdownPath(
   folder: string,
   title: string,

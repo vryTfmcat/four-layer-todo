@@ -35,9 +35,7 @@
 }.four-layer-todo-plugin{
   background: #e9ede7;
   color: var(--ink);
-  font-family:
-    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: var(--font-interface);
 }.four-layer-todo-plugin button,.four-layer-todo-plugin input,.four-layer-todo-plugin textarea{
   font: inherit;
 }.four-layer-todo-plugin button{
@@ -981,13 +979,12 @@
 }.four-layer-todo-plugin .kanban-card .task-note-link{
   margin-left: auto;
 }.four-layer-todo-plugin .pool-masonry{
-  columns: 3 250px;
-  column-gap: 13px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 13px;
 }.four-layer-todo-plugin .pool-masonry .kanban-card{
   width: 100%;
-  display: inline-block;
-  break-inside: avoid;
-  margin: 0 0 13px;
+  margin: 0;
 }.four-layer-todo-plugin .pool-detail-actions{
   margin-top: 16px;
 }.four-layer-todo-plugin .canvas-card .task-note-link,.four-layer-todo-plugin .workbench-card .task-note-link{
@@ -1228,12 +1225,7 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {.four-layer-todo-plugin, .four-layer-todo-plugin *,.four-layer-todo-plugin *::before,.four-layer-todo-plugin *::after{
-    scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
-  }
-}.four-layer-todo-plugin .friend-guide-backdrop{
+.four-layer-todo-plugin .friend-guide-backdrop{
   position: fixed;
   inset: 0;
   z-index: 1000;
@@ -1500,10 +1492,10 @@
   font-size: 10px;
   font-weight: 700;
   cursor: pointer;
-}.four-layer-todo-plugin .sidebar-add-pool{
+}.four-layer-todo-plugin .sidebar-section button.sidebar-add-pool{
   margin-top: 7px;
-  border: 1px dashed #bdc9c0 !important;
-  background: rgba(255, 255, 255, 0.55) !important;
+  border: 1px dashed #bdc9c0;
+  background: rgba(255, 255, 255, 0.55);
 }.four-layer-todo-plugin .inline-add-form{
   display: grid;
   gap: 5px;
@@ -1716,9 +1708,9 @@
 }.four-layer-todo-plugin .transparent-ui .canvas-connection:hover,.four-layer-todo-plugin .transparent-ui .canvas-connection.selected{
   stroke: var(--green);
 }.four-layer-todo-plugin .transparent-ui .canvas-card,.four-layer-todo-plugin .transparent-ui .canvas-text-note,.four-layer-todo-plugin .transparent-ui .workbench-card,.four-layer-todo-plugin .transparent-ui .kanban-card,.four-layer-todo-plugin .transparent-ui .object-card,.four-layer-todo-plugin .transparent-ui .kanban-column,.four-layer-todo-plugin .transparent-ui .preview-pools button,.four-layer-todo-plugin .transparent-ui .object-summary div{
-  border-color: var(--line) !important;
-  background: transparent !important;
-  box-shadow: none !important;
+  border-color: var(--line);
+  background: transparent;
+  box-shadow: none;
 }.four-layer-todo-plugin .transparent-ui .canvas-card p,.four-layer-todo-plugin .transparent-ui .canvas-text-note,.four-layer-todo-plugin .transparent-ui .workbench-card p,.four-layer-todo-plugin .transparent-ui .kanban-card p,.four-layer-todo-plugin .transparent-ui .object-card p,.four-layer-todo-plugin .transparent-ui .storage-heading p,.four-layer-todo-plugin .transparent-ui .storage-preview-heading p{
   color: var(--muted);
 }.four-layer-todo-plugin .transparent-ui .canvas-card h2,.four-layer-todo-plugin .transparent-ui .workbench-card h3,.four-layer-todo-plugin .transparent-ui .kanban-card h3{
@@ -1734,4 +1726,19 @@
   border-color: var(--line);
   background: var(--background-primary, #fff);
   color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .four-layer-todo-plugin .flip-button,
+  .four-layer-todo-plugin .primary-button,
+  .four-layer-todo-plugin .workspace-card,
+  .four-layer-todo-plugin .canvas-toolbar button[data-tooltip]::after,
+  .four-layer-todo-plugin .canvas-card,
+  .four-layer-todo-plugin .canvas-card footer,
+  .four-layer-todo-plugin .canvas-connection,
+  .four-layer-todo-plugin .canvas-link-handle,
+  .four-layer-todo-plugin .kanban-card,
+  .four-layer-todo-plugin .task-quick-actions {
+    transition-duration: 0.01ms;
+  }
 }

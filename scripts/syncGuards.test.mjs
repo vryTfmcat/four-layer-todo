@@ -5,6 +5,7 @@ import {
   isNumericConflictBasename,
   renameOperationKey,
   stableTaskFileStem,
+  stripGeneratedLinkedNoteBacklinks,
 } from "../src/syncGuards.ts";
 
 const fallback = "Untitled task";
@@ -73,5 +74,22 @@ test("rename keys match exact old and new path pairs", () => {
   assert.notEqual(
     renameOperationKey("todo/Task.md", "todo/Task 2.md"),
     renameOperationKey("todo/Task.md", "todo/Task 3.md"),
+  );
+});
+
+test("removes every generated backlink and legacy stray bracket", () => {
+  const path = "Folder/Linked note.md";
+  assert.equal(
+    stripGeneratedLinkedNoteBacklinks(
+      `User detail\n\n[[${path}|关联原笔记]]\n]\n\n[[${path}|关联原笔记]]`,
+    ),
+    "User detail",
+  );
+});
+
+test("preserves ordinary user links", () => {
+  assert.equal(
+    stripGeneratedLinkedNoteBacklinks("Keep [[Folder/Note|my alias]]"),
+    "Keep [[Folder/Note|my alias]]",
   );
 });

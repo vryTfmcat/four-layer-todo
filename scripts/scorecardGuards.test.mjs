@@ -1,0 +1,33 @@
+import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import test from "node:test";
+
+const sourceCss = readFileSync("src/ui/globals.css", "utf8");
+const releaseCss = readFileSync("styles.css", "utf8");
+const pluginSource = readFileSync("src/main.tsx", "utf8");
+
+test("release and source CSS avoid scorecard compatibility warnings", () => {
+  for (const css of [sourceCss, releaseCss]) {
+    assert.doesNotMatch(css, /!important/);
+    assert.doesNotMatch(css, /(^|[{;\s])columns\s*:/m);
+    assert.doesNotMatch(css, /(^|[{;\s])column-gap\s*:/m);
+    assert.doesNotMatch(css, /(^|[{;\s])break-inside\s*:/m);
+    assert.doesNotMatch(css, /-apple-system|BlinkMacSystemFont|ui-sans-serif/);
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+  }
+});
+
+test("deprecated and unused compatibility code stays removed", () => {
+  assert.doesNotMatch(pluginSource, /\bdisplay\(\): void/);
+  assert.equal(existsSync("src/react-shim.ts"), false);
+  assert.equal(existsSync("src/react-dom-shim.ts"), false);
+});
+
+test("release metadata versions agree", () => {
+  const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
+  const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
+  const versions = JSON.parse(readFileSync("versions.json", "utf8"));
+
+  assert.equal(manifest.version, packageJson.version);
+  assert.equal(versions[manifest.version], manifest.minAppVersion);
+});

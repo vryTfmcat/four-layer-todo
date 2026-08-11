@@ -379,6 +379,7 @@ export function TodoWorkspace(
   } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const normalizedCanvasLayoutRef = useRef(false);
+  const skipNextStorageSaveRef = useRef(false);
 
   useEffect(() => {
     const board = canvasRef.current;
@@ -397,20 +398,32 @@ export function TodoWorkspace(
       const maxNoteX = Math.max(CANVAS_SAFE_PADDING, width - CANVAS_TEXT_NOTE_WIDTH - CANVAS_SAFE_PADDING);
       const maxNoteY = Math.max(CANVAS_TOP_SAFE_AREA, height - CANVAS_TEXT_NOTE_HEIGHT - CANVAS_SAFE_PADDING);
 
-      setCanvasCards((cards) =>
-        cards.map((card) => {
+      setCanvasCards((cards) => {
+        let changed = false;
+        const nextCards = cards.map((card) => {
           const x = Math.max(CANVAS_SAFE_PADDING, Math.min(maxCardX, card.x));
           const y = Math.max(CANVAS_TOP_SAFE_AREA, Math.min(maxCardY, card.y));
-          return x === card.x && y === card.y ? card : { ...card, x, y };
-        }),
-      );
-      setCanvasTextNotes((notes) =>
-        notes.map((note) => {
+          if (x === card.x && y === card.y) return card;
+          changed = true;
+          return { ...card, x, y };
+        });
+        if (!changed) return cards;
+        skipNextStorageSaveRef.current = true;
+        return nextCards;
+      });
+      setCanvasTextNotes((notes) => {
+        let changed = false;
+        const nextNotes = notes.map((note) => {
           const x = Math.max(CANVAS_SAFE_PADDING, Math.min(maxNoteX, note.x));
           const y = Math.max(CANVAS_TOP_SAFE_AREA, Math.min(maxNoteY, note.y));
-          return x === note.x && y === note.y ? note : { ...note, x, y };
-        }),
-      );
+          if (x === note.x && y === note.y) return note;
+          changed = true;
+          return { ...note, x, y };
+        });
+        if (!changed) return notes;
+        skipNextStorageSaveRef.current = true;
+        return nextNotes;
+      });
     };
 
     const observer = new ResizeObserver(keepItemsInBounds);
@@ -425,6 +438,7 @@ export function TodoWorkspace(
       try {
         const parsed = storage ? await storage.load() : null;
         if (!active || !parsed) return;
+        skipNextStorageSaveRef.current = true;
         if (parsed.canvasCards) setCanvasCards(parsed.canvasCards);
         if (parsed.canvasConnections) setCanvasConnections(parsed.canvasConnections);
         if (parsed.canvasTextNotes) setCanvasTextNotes(parsed.canvasTextNotes);
@@ -475,6 +489,7 @@ export function TodoWorkspace(
     if (!storage?.subscribe) return;
 
     return storage.subscribe((state) => {
+      skipNextStorageSaveRef.current = true;
       if (state.canvasCards) setCanvasCards(state.canvasCards);
       if (state.canvasConnections) setCanvasConnections(state.canvasConnections);
       if (state.canvasTextNotes) setCanvasTextNotes(state.canvasTextNotes);
@@ -491,6 +506,10 @@ export function TodoWorkspace(
 
   useEffect(() => {
     if (!hydrated) return;
+    if (skipNextStorageSaveRef.current) {
+      skipNextStorageSaveRef.current = false;
+      return;
+    }
     const state = {
       canvasCards,
       canvasConnections,
@@ -679,7 +698,7 @@ export function TodoWorkspace(
     }
   };
 
-  const beginMove = async (
+  const performMove = async (
     task: TaskItem,
     origin: TaskOrigin,
     destination: MoveDestination,
@@ -736,6 +755,17 @@ export function TodoWorkspace(
     }));
   };
 
+  const beginMove = (
+    task: TaskItem,
+    origin: TaskOrigin,
+    destination: MoveDestination,
+  ): void => {
+    void performMove(task, origin, destination).catch((error: unknown) => {
+      console.error("Four Layer Todo: move action failed", error);
+      showToast(tr("移动“{title}”失败", { title: task.title }));
+    });
+  };
+
   const removeFromOrigin = (origin: TaskOrigin, taskId: string) => {
     if (origin.kind === "canvas") {
       setCanvasCards((items) => items.filter((item) => item.id !== taskId));
@@ -762,7 +792,7 @@ export function TodoWorkspace(
     }
   };
 
-  const completeMove = async (
+  const performCompleteMove = async (
     target:
       | { kind: "whiteboard" }
       | { kind: "workbench"; list: "inbox" | "todo" | "cache" }
@@ -834,6 +864,18 @@ export function TodoWorkspace(
     }
     showToast(tr("已添加到{destination}", { destination: targetName(target, storeColumns) }));
     setPendingMove(null);
+  };
+
+  const completeMove = (
+    target:
+      | { kind: "whiteboard" }
+      | { kind: "workbench"; list: "inbox" | "todo" | "cache" }
+      | { kind: "storage"; columnId: string },
+  ): void => {
+    void performCompleteMove(target).catch((error: unknown) => {
+      console.error("Four Layer Todo: complete move failed", error);
+      showToast(tr("移动待办失败"));
+    });
   };
 
   const addCanvasTask = () => {
