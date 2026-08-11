@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.10
+
+- Remove unused React compatibility shims that caused false unsafe-type
+  findings in the community plugin scorecard.
+- Route asynchronous UI actions through void callbacks with explicit error
+  handling.
+- Remove the deprecated settings-tab `display()` implementation and use only
+  Obsidian 1.13 declarative settings definitions.
+- Replace unsupported multi-column CSS and extended system-font fallbacks with
+  Obsidian-compatible grid and interface font styles.
+- Remove `!important` overrides while preserving reduced-motion and transparent
+  interface behavior through selector specificity.
+- Add typed ESLint checks, pull-request CI, and a contributing guide.
+- Make startup and externally received Markdown updates read-only from the
+  plugin side, preventing Obsidian Sync downloads from being immediately
+  written back and turned into numeric conflict copies.
+- Remove every generated linked-note backlink, including a legacy malformed
+  trailing bracket variant, before writing one canonical backlink.
+
 ## 0.1.9
 
 - Give every synchronized card, including whiteboard and linked-note cards, a

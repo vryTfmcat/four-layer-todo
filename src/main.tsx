@@ -17,7 +17,6 @@ import {
   normalizePath,
   Plugin,
   PluginSettingTab,
-  Setting,
   type SettingDefinitionItem,
   TFile,
   TFolder,
@@ -36,6 +35,7 @@ import {
   isNumericConflictBasename,
   renameOperationKey,
   stableTaskFileStem,
+  stripGeneratedLinkedNoteBacklinks,
 } from "./syncGuards";
 
 const VIEW_TYPE = "four-layer-todo-workspace";
@@ -550,7 +550,7 @@ function getTaskRecords(state: WorkspaceState): TaskRecord[] {
 
 function serializeTaskNote(record: TaskRecord): string {
   const { task } = record;
-  const detail = task.detail.trim();
+  const detail = stripGeneratedLinkedNoteBacklinks(task.detail);
   const isCanvasTask = record.location === "canvas";
 
   return [
@@ -671,13 +671,7 @@ function parseTaskNote(
       ? body.slice(legacyHeading[0].length).trim()
       : body;
   const storedLinkedNotePath = getString(frontmatter.linkedNotePath);
-  const linkedNoteSuffix = storedLinkedNotePath
-    ? `[[${storedLinkedNotePath}|关联原笔记]]`
-    : undefined;
-  let detail = parsedDetail;
-  while (linkedNoteSuffix && detail.endsWith(linkedNoteSuffix)) {
-    detail = detail.slice(0, -linkedNoteSuffix.length).trimEnd();
-  }
+  const detail = stripGeneratedLinkedNoteBacklinks(parsedDetail);
   const linkedNotePath =
     storedLinkedNotePath === filePath ? undefined : storedLinkedNotePath;
   const source = ["笔记", "Note"].includes(String(frontmatter.source))
@@ -819,7 +813,7 @@ class FourLayerTodoView extends ItemView {
     return "layers";
   }
 
-  async onOpen(): Promise<void> {
+  onOpen(): Promise<void> {
     try {
       this.contentEl.empty();
       this.contentEl.addClass("four-layer-todo-plugin");
@@ -841,15 +835,17 @@ class FourLayerTodoView extends ItemView {
         message: error instanceof Error ? error.message : String(error),
       }));
     }
+    return Promise.resolve();
   }
 
-  async onClose(): Promise<void> {
+  onClose(): Promise<void> {
     try {
       this.root?.unmount();
     } catch (error) {
       console.error("四层待办: onClose error", error);
     }
     this.root = null;
+    return Promise.resolve();
   }
 
   refreshLocale(): void {
@@ -951,67 +947,6 @@ class FourLayerTodoSettingTab extends PluginSettingTab {
     }
   }
 
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-    new Setting(containerEl)
-      .setName(this.plugin.t("Markdown 内容同步"))
-      .setHeading();
-
-    new Setting(containerEl)
-      .setName(this.plugin.t("界面语言"))
-      .setDesc(this.plugin.t("更改后会重新打开插件视图，不会修改已有任务内容或文件夹。"))
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("auto", this.plugin.t("自动（跟随 Obsidian）"))
-          .addOption("zh", this.plugin.t("中文"))
-          .addOption("en", this.plugin.t("英文"))
-          .setValue(this.plugin.settings.language)
-          .onChange(async (value) => {
-            await this.plugin.updateLanguage(value as LanguageSetting);
-            this.display();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName(this.plugin.t("将内容同步为 Markdown"))
-      .setDesc(this.plugin.t("为每张待办卡和长期对象创建可在 Obsidian 中双向编辑的 .md 文件。"))
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.markdownSyncEnabled)
-          .onChange(async (value) => {
-            this.plugin.settings.markdownSyncEnabled = value;
-            await this.plugin.saveSettings(value);
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName(this.plugin.t("待办与对象文件夹"))
-      .setDesc(this.plugin.t("相对于当前 Vault 根目录。长期对象保存在其中的“长期对象”目录。"))
-      .addText((text) =>
-        text
-          .setPlaceholder(DEFAULT_SETTINGS.taskNotesFolder)
-          .setValue(this.plugin.settings.taskNotesFolder)
-          .onChange(async (value) => {
-            this.plugin.settings.taskNotesFolder = value;
-            await this.plugin.saveSettings(false);
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName(this.plugin.t("立即同步"))
-      .setDesc(this.plugin.t("将当前待办和长期对象写入配置的文件夹。"))
-      .addButton((button) =>
-        button.setButtonText(this.plugin.t("同步现有待办")).onClick(async () => {
-          if (!this.plugin.settings.markdownSyncEnabled) {
-            new Notice(this.plugin.t("请先启用“将内容同步为 Markdown”"));
-            return;
-          }
-          await this.plugin.syncMarkdownBidirectionally();
-          new Notice(this.plugin.t("四层待办已与 Markdown 文件双向同步"));
-        }),
-      );
-  }
 }
 
 export default class FourLayerTodoPlugin extends Plugin {
@@ -1050,7 +985,7 @@ export default class FourLayerTodoPlugin extends Plugin {
     }
 
     if (this.settings.resetGuidedSample || !this.workspaceState) {
-      await this.restoreGuidedSample();
+      this.restoreGuidedSample();
       this.settings.resetGuidedSample = false;
       this.settings.guidedSampleVersion = GUIDED_SAMPLE_VERSION;
       await this.persistWorkspace();
@@ -1081,7 +1016,10 @@ export default class FourLayerTodoPlugin extends Plugin {
       this.settings.markdownSyncEnabled
     ) {
       try {
-        await this.syncMarkdownBidirectionally();
+        await this.enqueueMarkdownMutation(async () => {
+          await this.syncMarkdownToWorkspace();
+          await this.refreshMarkdownPaths();
+        });
       } catch (error) {
         console.error("四层待办: markdown startup sync error", error);
       }
@@ -1346,8 +1284,8 @@ export default class FourLayerTodoPlugin extends Plugin {
       });
   }
 
-  private async loadWorkspace(): Promise<Partial<WorkspaceState> | null> {
-    return this.workspaceState ? clone(this.workspaceState) : null;
+  private loadWorkspace(): Promise<Partial<WorkspaceState> | null> {
+    return Promise.resolve(this.workspaceState ? clone(this.workspaceState) : null);
   }
 
   private saveWorkspace(state: WorkspaceState): Promise<void> {
@@ -1623,7 +1561,7 @@ export default class FourLayerTodoPlugin extends Plugin {
     this.emitWorkspace();
   }
 
-  private async restoreGuidedSample(): Promise<void> {
+  private restoreGuidedSample(): void {
     this.taskPaths.clear();
     this.longTermObjectPaths.clear();
     this.workspaceState = createGuidedSampleWorkspace();
@@ -1668,7 +1606,7 @@ export default class FourLayerTodoPlugin extends Plugin {
     );
   }
 
-  private async searchNotes(query: string): Promise<LinkedNoteSuggestion[]> {
+  private searchNotes(query: string): Promise<LinkedNoteSuggestion[]> {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     const files = this.app.vault
       .getMarkdownFiles()
@@ -1680,11 +1618,13 @@ export default class FourLayerTodoPlugin extends Plugin {
       })
       .slice(0, 40);
 
-    return files.map((file) => ({
-      path: file.path,
-      title: file.basename,
-      isTaskFolderNote: this.isMovableTaskFolderNotePath(file.path),
-    }));
+    return Promise.resolve(
+      files.map((file) => ({
+        path: file.path,
+        title: file.basename,
+        isTaskFolderNote: this.isMovableTaskFolderNotePath(file.path),
+      })),
+    );
   }
 
   private async openNote(path: string): Promise<void> {
@@ -1853,19 +1793,21 @@ export default class FourLayerTodoPlugin extends Plugin {
     await this.loadNativeCanvas(file.path);
   }
 
-  private async listNativeCanvases(): Promise<NativeCanvasFile[]> {
+  private listNativeCanvases(): Promise<NativeCanvasFile[]> {
     const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    if (!this.taskFolderIsUsable(folder)) return [];
+    if (!this.taskFolderIsUsable(folder)) return Promise.resolve([]);
 
     const whiteboardFolder = `${folder}/白板/`;
-    return this.app.vault
-      .getFiles()
-      .filter(
-        (file) =>
-          file.extension === "canvas" && file.path.startsWith(whiteboardFolder),
-      )
-      .map((file) => ({ path: file.path, title: file.basename }))
-      .sort((left, right) => left.title.localeCompare(right.title, "zh-Hans-CN"));
+    return Promise.resolve(
+      this.app.vault
+        .getFiles()
+        .filter(
+          (file) =>
+            file.extension === "canvas" && file.path.startsWith(whiteboardFolder),
+        )
+        .map((file) => ({ path: file.path, title: file.basename }))
+        .sort((left, right) => left.title.localeCompare(right.title, "zh-Hans-CN")),
+    );
   }
 
   private async loadNativeCanvas(

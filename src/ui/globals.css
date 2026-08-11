@@ -30,9 +30,7 @@ body {
 body {
   background: #e9ede7;
   color: var(--ink);
-  font-family:
-    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: var(--font-interface);
 }
 
 button,
@@ -1345,15 +1343,14 @@ input:focus-visible {
 }
 
 .pool-masonry {
-  columns: 3 250px;
-  column-gap: 13px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 13px;
 }
 
 .pool-masonry .kanban-card {
   width: 100%;
-  display: inline-block;
-  break-inside: avoid;
-  margin: 0 0 13px;
+  margin: 0;
 }
 
 .pool-detail-actions {
@@ -1735,16 +1732,6 @@ input:focus-visible {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
-  }
-}
-
 .friend-guide-backdrop {
   position: fixed;
   inset: 0;
@@ -2100,10 +2087,10 @@ input:focus-visible {
   cursor: pointer;
 }
 
-.sidebar-add-pool {
+.sidebar-section button.sidebar-add-pool {
   margin-top: 7px;
-  border: 1px dashed #bdc9c0 !important;
-  background: rgba(255, 255, 255, 0.55) !important;
+  border: 1px dashed #bdc9c0;
+  background: rgba(255, 255, 255, 0.55);
 }
 
 .inline-add-form {
@@ -2423,9 +2410,9 @@ input:focus-visible {
 .transparent-ui .kanban-column,
 .transparent-ui .preview-pools button,
 .transparent-ui .object-summary div {
-  border-color: var(--line) !important;
-  background: transparent !important;
-  box-shadow: none !important;
+  border-color: var(--line);
+  background: transparent;
+  box-shadow: none;
 }
 
 .transparent-ui .canvas-card p,
@@ -2473,4 +2460,19 @@ input:focus-visible {
   border-color: var(--line);
   background: var(--background-primary, #fff);
   color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flip-button,
+  .primary-button,
+  .workspace-card,
+  .canvas-toolbar button[data-tooltip]::after,
+  .canvas-card,
+  .canvas-card footer,
+  .canvas-connection,
+  .canvas-link-handle,
+  .kanban-card,
+  .task-quick-actions {
+    transition-duration: 0.01ms;
+  }
 }
