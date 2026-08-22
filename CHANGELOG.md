@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.11 - 2026-08-21
+
+- Make Markdown files and their folders the only source of task content and
+  layer placement; `data.json` now stores settings and the migration version
+  only.
+- Store whiteboard coordinates, colors, connections, and text notes only in
+  `任务白板.canvas`. Canvas failures never roll back an already committed task
+  move.
+- Replace whole-workspace autosaves with targeted create, update, move,
+  archive, delete, and Canvas-layout commands followed by a read-only index
+  refresh.
+- Add `_任务池.md` metadata files for task-pool descriptions, colors, and
+  ordering.
+- Migrate legacy workspace-only tasks and remove duplicated title, placement,
+  and layout fields from managed task frontmatter.
+- Isolate active duplicate task IDs, show every conflicting path in settings,
+  and block edits or moves until the conflict is resolved manually. Archived
+  historical duplicates remain valid.
+- Keep same-folder numeric Sync shadow copies on disk but ignore them in the
+  task index, so deterministic conflict copies cannot hide the canonical task.
+- Add a read-only settings button that reloads managed Markdown tasks from the
+  configured task folder and refreshes every open plugin view.
+- Show every active duplicate-ID file in its actual layer as a read-only
+  conflict card while continuing to block edits, moves, and automatic cleanup.
+- Add file-source, sorting, conflict, Canvas fallback, and simulated Vault
+  race tests.
+
 ## 0.1.10
 
 - Remove unused React compatibility shims that caused false unsafe-type
