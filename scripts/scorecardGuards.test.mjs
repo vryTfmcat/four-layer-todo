@@ -26,6 +26,7 @@ test("task cards cap long titles and details", () => {
 
 test("deprecated and unused compatibility code stays removed", () => {
   assert.doesNotMatch(pluginSource, /\bdisplay\(\): void/);
+  assert.doesNotMatch(pluginSource, /detachLeavesOfType/);
   assert.equal(existsSync("src/react-shim.ts"), false);
   assert.equal(existsSync("src/react-dom-shim.ts"), false);
 });

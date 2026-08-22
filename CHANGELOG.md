@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.12 - 2026-08-22
+
+- Preserve user-arranged workspace leaf placement by letting Obsidian manage
+  registered view cleanup instead of detaching leaves during plugin unload.
+- Add a regression guard that rejects future lifecycle code which detaches
+  workspace leaves.
+
 ## 0.1.11 - 2026-08-21
 
 - Make Markdown files and their folders the only source of task content and

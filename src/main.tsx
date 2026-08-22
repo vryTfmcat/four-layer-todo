@@ -947,10 +947,6 @@ export default class FourLayerTodoPlugin extends Plugin {
     }
   }
 
-  onunload(): void {
-    this.app.workspace.detachLeavesOfType(VIEW_TYPE);
-  }
-
   getIconResourcePath(): string {
     return todoIconDataUrl;
   }
