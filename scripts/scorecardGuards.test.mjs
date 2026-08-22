@@ -17,6 +17,13 @@ test("release and source CSS avoid scorecard compatibility warnings", () => {
   }
 });
 
+test("task cards cap long titles and details", () => {
+  for (const css of [sourceCss, releaseCss]) {
+    assert.match(css, /\.workbench-card h3[^}]*-webkit-line-clamp:\s*2/s);
+    assert.match(css, /\.workbench-card p[^}]*-webkit-line-clamp:\s*3/s);
+  }
+});
+
 test("deprecated and unused compatibility code stays removed", () => {
   assert.doesNotMatch(pluginSource, /\bdisplay\(\): void/);
   assert.equal(existsSync("src/react-shim.ts"), false);

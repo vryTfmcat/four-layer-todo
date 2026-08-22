@@ -18,7 +18,7 @@ workbench, task pools, and long-term objects.
 - Long-term objects with related tasks.
 - Task connections, text notes, card movement, archiving, deletion, and
   completion.
-- Optional Markdown synchronization with bidirectional edits in the vault.
+- Markdown files and folders as the single source of task content and layers.
 - Links to notes outside the task folder without moving the original file.
 - Import and export through Obsidian's official Canvas format.
 
@@ -53,23 +53,38 @@ npm run install:local
 Then enable **Four-Layer Todo** in Obsidian's Community Plugins settings and
 run **Open Four-Layer Todo** from the command palette.
 
-## Markdown Synchronization
+## Markdown / Canvas Source of Truth
 
-Enable Markdown synchronization in the plugin settings and set the task-notes
-folder. The default folder is `待办` ("Todo") for compatibility with existing
-vaults, and synchronization is disabled by default. You can choose any root
-folder name before enabling synchronization.
+Set the task-notes folder in the plugin settings. The default is `待办`
+("Todo") for compatibility with existing vaults. There is no synchronization
+toggle: the plugin always reads and writes the files in this folder.
 
-- Each regular task and long-term object is stored as an Obsidian-readable
-  Markdown file.
-- File names provide the visible task title; no duplicate H1 is written into
-  the note body.
-- Frontmatter keeps the card ID, location, priority, whiteboard position, and
-  other metadata required for bidirectional synchronization.
-- Moving or renaming a managed note updates its task card.
-- Each direct child folder under `任务存储器/` is a task pool. Creating,
-  renaming, or removing an empty pool folder, and moving a task note between
-  pool folders, updates the plugin UI.
+Before the first 0.1.11 startup, let Obsidian Sync finish and disable or update
+older plugin builds on other devices. The one-time migration rewrites managed
+frontmatter; any duplicate IDs received from Sync are isolated for manual
+review instead of being guessed or deleted.
+
+- Only Markdown with `fourLayerTodo: true` is indexed; ordinary notes in the
+  same folders are untouched.
+- The file name is the title, the body is the detail, and frontmatter stores
+  only the stable ID, priority, completion, order, long-term-object ID, and
+  linked-note path.
+- The directory is the only task-layer source. Moving or renaming a managed
+  note updates the UI; Vault events never move a file from an in-memory copy.
+- Each direct child folder under `任务存储器/` is a task pool. Its `_任务池.md`
+  stores the pool description, color, and order.
+- The **Load tasks** button in settings manually rebuilds the task index from
+  the configured task folder and refreshes the plugin view. This operation is
+  read-only: it never writes, moves, copies, or deletes files.
+- `白板/任务白板.canvas` stores file nodes, coordinates, colors, connections,
+  and text notes only. Missing or invalid Canvas data cannot change a task's
+  directory.
+- `data.json` stores only the task root, language, transparent-interface
+  preference, and file-schema migration version. It contains no task body or
+  workspace snapshot.
+- Active duplicate IDs are excluded from the normal index and listed with all
+  conflicting paths in plugin settings. Resolve them manually before editing
+  or moving those tasks.
 - Deleting a managed note removes its task card.
 - Linking a note inside the task folder moves it to the selected task area.
   Linking a note outside the task folder creates a backlink-style task card and
@@ -91,14 +106,15 @@ The synchronized folder layout is:
 └── 长期对象/
 ```
 
-Archiving requires Markdown synchronization so that the note can be moved into
-the dated archive folder. Deleting sends the managed Markdown note to
-Obsidian's trash.
+Archiving moves the managed note into the dated archive folder. Deleting sends
+the managed Markdown note to Obsidian's trash.
 
 ## Development Checks
 
 ```bash
 npm run build
+npm test
+npm run lint
 node --check main.js
 ```
 

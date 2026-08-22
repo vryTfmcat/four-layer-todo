@@ -892,9 +892,44 @@ input:focus-visible {
   box-shadow: 0 5px 14px rgba(37, 52, 44, 0.055);
 }
 
+.canvas-card.read-only-conflict,
+.workbench-card.read-only-conflict,
+.kanban-card.read-only-conflict {
+  border-color: rgba(183, 127, 38, 0.48);
+  background: linear-gradient(135deg, #fffaf0, #fffdf8);
+  box-shadow: 0 5px 16px rgba(129, 85, 20, 0.1);
+}
+
+.read-only-conflict .card-kicker,
+.read-only-conflict footer {
+  color: #9a6720;
+}
+
 .workbench-card h3,
 .kanban-card h3 {
+  display: -webkit-box;
+  overflow: hidden;
   font-size: 13px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.workbench-card p,
+.kanban-card p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.workbench-card .card-kicker > span,
+.kanban-card .card-kicker > span,
+.workbench-card footer > span,
+.kanban-card footer > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workbench-card footer,
@@ -1636,10 +1671,7 @@ input:focus-visible {
 
   .workbench-card p,
   .kanban-card p {
-    display: -webkit-box;
-    overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 5;
+    -webkit-line-clamp: 3;
   }
 
   .storage-preview {

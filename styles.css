@@ -657,7 +657,21 @@
   background: white;
   box-shadow: 0 5px 14px rgba(37, 52, 44, 0.055);
 }.four-layer-todo-plugin .workbench-card h3,.four-layer-todo-plugin .kanban-card h3{
+  display: -webkit-box;
+  overflow: hidden;
   font-size: 13px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}.four-layer-todo-plugin .workbench-card p,.four-layer-todo-plugin .kanban-card p{
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}.four-layer-todo-plugin .workbench-card .card-kicker > span,.four-layer-todo-plugin .kanban-card .card-kicker > span,.four-layer-todo-plugin .workbench-card footer > span,.four-layer-todo-plugin .kanban-card footer > span{
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }.four-layer-todo-plugin .workbench-card footer,.four-layer-todo-plugin .kanban-card footer{
   display: flex;
   align-items: center;
@@ -1166,10 +1180,7 @@
   }.four-layer-todo-plugin .workbench-card{
     min-height: 0;
   }.four-layer-todo-plugin .workbench-card p,.four-layer-todo-plugin .kanban-card p{
-    display: -webkit-box;
-    overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 5;
+    -webkit-line-clamp: 3;
   }.four-layer-todo-plugin .storage-preview{
     min-height: 0;
     padding: 28px 20px;

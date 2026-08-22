@@ -18,6 +18,10 @@ export type TaskItem = {
   meta?: string;
   priority?: "P2" | "P3" | "P4" | "P5";
   object?: string;
+  done?: boolean;
+  readOnlyConflict?: boolean;
+  conflictOriginalId?: string;
+  conflictPath?: string;
 };
 
 type CanvasCard = TaskItem & {
@@ -25,7 +29,6 @@ type CanvasCard = TaskItem & {
   y: number;
   tone: "sage" | "cream" | "lavender" | "blue";
   parent?: string;
-  done?: boolean;
 };
 
 type CanvasConnection = {
@@ -110,11 +113,17 @@ export type WorkspaceState = {
 };
 
 export type WorkspaceStorage = {
-  load: () => Promise<Partial<WorkspaceState> | null>;
-  save: (state: WorkspaceState) => Promise<void> | void;
+  loadSnapshot: () => Promise<Partial<WorkspaceState> | null>;
   subscribe?: (listener: (state: Partial<WorkspaceState>) => void) => () => void;
+  createTask?: (task: TaskItem, target: NoteTaskTarget) => Promise<void> | void;
+  updateTask?: (task: TaskItem) => Promise<void> | void;
+  createPool?: (column: StoreColumn) => Promise<void> | void;
+  createLongTermObject?: (object: LongTermObject) => Promise<void> | void;
+  updateCanvasLayout?: (state: Pick<WorkspaceState,
+    "canvasCards" | "canvasConnections" | "canvasTextNotes"
+  >) => Promise<void> | void;
+  setTransparentUi?: (value: boolean) => Promise<void> | void;
   archiveTask?: (taskId: string) => Promise<void> | void;
-  isMarkdownSyncEnabled?: () => boolean;
   deleteTask?: (taskId: string) => Promise<void> | void;
   searchNotes?: (query: string) => Promise<LinkedNoteSuggestion[]>;
   moveTaskNote?: (path: string, target: NoteTaskTarget) => Promise<void> | void;
@@ -334,6 +343,7 @@ export function TodoWorkspace(
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
   const [pendingMove, setPendingMove] = useState<PendingMove | null>(null);
+  const [movingTaskId, setMovingTaskId] = useState<string | null>(null);
   const [addingPool, setAddingPool] = useState(false);
   const [newPoolTitle, setNewPoolTitle] = useState("");
   const [addingLongTermObject, setAddingLongTermObject] = useState(false);
@@ -379,7 +389,7 @@ export function TodoWorkspace(
   } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const normalizedCanvasLayoutRef = useRef(false);
-  const skipNextStorageSaveRef = useRef(false);
+  const movingTaskIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
     const board = canvasRef.current;
@@ -408,7 +418,6 @@ export function TodoWorkspace(
           return { ...card, x, y };
         });
         if (!changed) return cards;
-        skipNextStorageSaveRef.current = true;
         return nextCards;
       });
       setCanvasTextNotes((notes) => {
@@ -421,7 +430,6 @@ export function TodoWorkspace(
           return { ...note, x, y };
         });
         if (!changed) return notes;
-        skipNextStorageSaveRef.current = true;
         return nextNotes;
       });
     };
@@ -436,9 +444,8 @@ export function TodoWorkspace(
     let active = true;
     const loadState = async () => {
       try {
-        const parsed = storage ? await storage.load() : null;
+        const parsed = storage ? await storage.loadSnapshot() : null;
         if (!active || !parsed) return;
-        skipNextStorageSaveRef.current = true;
         if (parsed.canvasCards) setCanvasCards(parsed.canvasCards);
         if (parsed.canvasConnections) setCanvasConnections(parsed.canvasConnections);
         if (parsed.canvasTextNotes) setCanvasTextNotes(parsed.canvasTextNotes);
@@ -489,7 +496,6 @@ export function TodoWorkspace(
     if (!storage?.subscribe) return;
 
     return storage.subscribe((state) => {
-      skipNextStorageSaveRef.current = true;
       if (state.canvasCards) setCanvasCards(state.canvasCards);
       if (state.canvasConnections) setCanvasConnections(state.canvasConnections);
       if (state.canvasTextNotes) setCanvasTextNotes(state.canvasTextNotes);
@@ -505,38 +511,16 @@ export function TodoWorkspace(
   }, [storage]);
 
   useEffect(() => {
-    if (!hydrated) return;
-    if (skipNextStorageSaveRef.current) {
-      skipNextStorageSaveRef.current = false;
-      return;
-    }
-    const state = {
-      canvasCards,
-      canvasConnections,
-      canvasTextNotes,
-      longTermObjects,
-      inbox,
-      todo,
-      cache,
-      storeColumns,
-      transparentUi,
-    };
-    if (storage) {
-      void storage.save(state);
-    }
-  }, [
-    canvasCards,
-    canvasConnections,
-    canvasTextNotes,
-    longTermObjects,
-    inbox,
-    todo,
-    cache,
-    storeColumns,
-    transparentUi,
-    hydrated,
-    storage,
-  ]);
+    if (!hydrated || !storage?.updateCanvasLayout) return;
+    const timeout = window.setTimeout(() => {
+      void storage.updateCanvasLayout?.({
+        canvasCards,
+        canvasConnections,
+        canvasTextNotes,
+      });
+    }, 120);
+    return () => window.clearTimeout(timeout);
+  }, [canvasCards, canvasConnections, canvasTextNotes, hydrated, storage]);
 
   useEffect(() => {
     if (normalizedCanvasLayoutRef.current || !hydrated) return;
@@ -597,12 +581,39 @@ export function TodoWorkspace(
     window.setTimeout(() => setToast(""), 2500);
   };
 
+  const toggleTransparentUi = () => {
+    const next = !transparentUi;
+    setTransparentUi(next);
+    void Promise.resolve(storage?.setTransparentUi?.(next)).catch(() => {
+      setTransparentUi(!next);
+      showToast(tr("保存界面设置失败"));
+    });
+  };
+
   const openTaskEditor = (task: TaskItem) => {
+    if (task.readOnlyConflict) {
+      showToast(tr("该任务有重复 ID，只能打开 Markdown；请手工解决冲突后再编辑或移动。"));
+      return;
+    }
     setOpenMenuId(null);
     setEditingTask({ ...task });
   };
 
-  const saveTaskEditor = () => {
+  const toggleTaskDone = (card: CanvasCard) => {
+    if (card.readOnlyConflict) return;
+    const updated = { ...card, done: !card.done };
+    setCanvasCards((cards) => cards.map((item) =>
+      item.id === card.id ? updated : item,
+    ));
+    void Promise.resolve(storage?.updateTask?.(updated)).catch(() => {
+      setCanvasCards((cards) => cards.map((item) =>
+        item.id === card.id ? card : item,
+      ));
+      showToast(tr("更新“{title}”失败", { title: card.title }));
+    });
+  };
+
+  const saveTaskEditor = async () => {
     if (!editingTask) return;
     const title = editingTask.title.trim();
     if (!title) {
@@ -618,6 +629,12 @@ export function TodoWorkspace(
     const replaceTask = <T extends TaskItem>(task: T): T =>
       task.id === updated.id ? { ...task, ...updated } : task;
 
+    try {
+      await storage?.updateTask?.(updated);
+    } catch {
+      showToast(tr("更新“{title}”失败", { title }));
+      return;
+    }
     setCanvasCards((tasks) => tasks.map(replaceTask));
     setInbox((tasks) => tasks.map(replaceTask));
     setTodo((tasks) => tasks.map(replaceTask));
@@ -704,6 +721,10 @@ export function TodoWorkspace(
     destination: MoveDestination,
   ) => {
     setOpenMenuId(null);
+    if (task.readOnlyConflict) {
+      showToast(tr("该任务有重复 ID，只能打开 Markdown；请手工解决冲突后再编辑或移动。"));
+      return;
+    }
     if (destination === "archive") {
       if (!storage?.archiveTask) {
         showToast(tr("归档仅在 Obsidian 插件中可用"));
@@ -729,11 +750,6 @@ export function TodoWorkspace(
       return;
     }
     if (destination === "unlink") {
-      if (storage?.isMarkdownSyncEnabled?.() === false) {
-        removeFromOrigin(origin, task.id);
-        showToast(tr("已取消“{title}”的笔记链接", { title: task.title }));
-        return;
-      }
       if (!storage?.archiveTask) {
         showToast(tr("归档仅在 Obsidian 插件中可用"));
         return;
@@ -799,6 +815,11 @@ export function TodoWorkspace(
       | { kind: "storage"; columnId: string },
   ) => {
     if (!pendingMove) return;
+    const taskId = pendingMove.task.id;
+    if (movingTaskIdsRef.current.has(taskId)) return;
+    movingTaskIdsRef.current.add(taskId);
+    setMovingTaskId(taskId);
+    try {
     const noteTarget: NoteTaskTarget =
       target.kind === "whiteboard"
         ? { location: "canvas" }
@@ -864,6 +885,10 @@ export function TodoWorkspace(
     }
     showToast(tr("已添加到{destination}", { destination: targetName(target, storeColumns) }));
     setPendingMove(null);
+    } finally {
+      movingTaskIdsRef.current.delete(taskId);
+      setMovingTaskId((current) => current === taskId ? null : current);
+    }
   };
 
   const completeMove = (
@@ -878,53 +903,59 @@ export function TodoWorkspace(
     });
   };
 
-  const addCanvasTask = () => {
+  const addCanvasTask = async () => {
     const title = newTaskTitle.trim();
     if (!title) return;
-    setCanvasCards((cards) => {
-      const board = canvasRef.current?.getBoundingClientRect();
-      const position = findAvailableCanvasCardPosition(
-        cards,
-        canvasTextNotes,
-        board ? { width: board.width, height: board.height } : undefined,
-      );
-      return [
-        ...cards,
-        {
-          id: createId("canvas"),
-          title,
-          detail: newTaskDetail.trim(),
-          source: "文本",
-          meta: tr("手动加入"),
-          ...position,
-          tone: "cream",
-        },
-      ];
-    });
+    const board = canvasRef.current?.getBoundingClientRect();
+    const position = findAvailableCanvasCardPosition(
+      canvasCards,
+      canvasTextNotes,
+      board ? { width: board.width, height: board.height } : undefined,
+    );
+    const task: CanvasCard = {
+      id: createId("canvas"),
+      title,
+      detail: newTaskDetail.trim(),
+      source: "文本",
+      meta: tr("手动加入"),
+      ...position,
+      tone: "cream",
+    };
+    try {
+      await storage?.createTask?.(task, { location: "canvas" });
+    } catch {
+      showToast(tr("创建“{title}”失败", { title }));
+      return;
+    }
+    if (!storage?.createTask) setCanvasCards((cards) => [...cards, task]);
     setNewTaskTitle("");
     setNewTaskDetail("");
     setAddingTask(false);
     showToast(tr("任务已放入白板"));
   };
 
-  const addPool = () => {
+  const addPool = async () => {
     const title = newPoolTitle.trim();
     if (!title) return;
-    setStoreColumns((columns) => [
-      ...columns,
-      {
-        id: createId("pool"),
-        title,
-        hint: tr("自定义任务池"),
-        tone: poolTones[columns.length % poolTones.length],
-        tasks: [],
-      },
-    ]);
+    const column: StoreColumn = {
+      id: createId("pool"),
+      title,
+      hint: tr("自定义任务池"),
+      tone: poolTones[storeColumns.length % poolTones.length],
+      tasks: [],
+    };
+    try {
+      await storage?.createPool?.(column);
+    } catch {
+      showToast(tr("创建任务池失败"));
+      return;
+    }
+    if (!storage?.createPool) setStoreColumns((columns) => [...columns, column]);
     setNewPoolTitle("");
     setAddingPool(false);
   };
 
-  const addLongTermObject = () => {
+  const addLongTermObject = async () => {
     const title = newLongTermObjectTitle.trim();
     if (!title) return;
 
@@ -943,7 +974,15 @@ export function TodoWorkspace(
       relatedTaskIds: [],
     };
 
-    setLongTermObjects((objects) => [...objects, object]);
+    try {
+      await storage?.createLongTermObject?.(object);
+    } catch {
+      showToast(tr("创建长期对象失败"));
+      return;
+    }
+    if (!storage?.createLongTermObject) {
+      setLongTermObjects((objects) => [...objects, object]);
+    }
     setSelectedObjectId(object.id);
     setNewLongTermObjectTitle("");
     setNewLongTermObjectDescription("");
@@ -956,7 +995,7 @@ export function TodoWorkspace(
     setNewRelatedTaskPoolId(storeColumns[0]?.id ?? "");
   };
 
-  const addRelatedTask = () => {
+  const addRelatedTask = async () => {
     const title = newRelatedTaskTitle.trim();
     const object = longTermObjects.find((item) => item.id === addingRelatedTaskTo);
     const columnId = storeColumns.some((column) => column.id === newRelatedTaskPoolId)
@@ -965,37 +1004,31 @@ export function TodoWorkspace(
     if (!title || !object || !columnId) return;
 
     const taskId = createId("store");
-    setStoreColumns((columns) =>
-      columns.map((column) =>
+    const task: TaskItem = {
+      id: taskId,
+      title,
+      detail: newRelatedTaskDetail.trim(),
+      source: "文本",
+      priority: "P3",
+      object: object.title,
+    };
+    try {
+      await storage?.createTask?.(task, {
+        location: "storage",
+        columnId,
+        objectId: object.id,
+      });
+    } catch {
+      showToast(tr("创建关联任务失败"));
+      return;
+    }
+    if (!storage?.createTask) {
+      setStoreColumns((columns) => columns.map((column) =>
         column.id === columnId
-          ? {
-              ...column,
-              tasks: [
-                ...column.tasks,
-                {
-                  id: taskId,
-                  title,
-                  detail: newRelatedTaskDetail.trim(),
-                  source: "文本",
-                  priority: "P3",
-                  object: object.title,
-                },
-              ],
-            }
+          ? { ...column, tasks: [...column.tasks, task] }
           : column,
-      ),
-    );
-    setLongTermObjects((objects) =>
-      objects.map((item) =>
-        item.id === object.id
-          ? {
-              ...item,
-              activity: tr("最近关联：{title}", { title }),
-              relatedTaskIds: [...new Set([...item.relatedTaskIds, taskId])],
-            }
-          : item,
-      ),
-    );
+      ));
+    }
     setAddingRelatedTaskTo(null);
     setNewRelatedTaskTitle("");
     setNewRelatedTaskDetail("");
@@ -1048,7 +1081,14 @@ export function TodoWorkspace(
       linkedNotePath: note.path,
     };
 
-    if (noteTaskTarget.location === "canvas") {
+    try {
+      await storage?.createTask?.(task, noteTaskTarget);
+    } catch {
+      showToast(tr("创建“{title}”失败", { title: note.title }));
+      return;
+    }
+
+    if (!storage?.createTask && noteTaskTarget.location === "canvas") {
       setCanvasCards((cards) => {
         const board = canvasRef.current?.getBoundingClientRect();
         const position = findAvailableCanvasCardPosition(
@@ -1058,13 +1098,13 @@ export function TodoWorkspace(
         );
         return [...cards, { ...task, ...position, tone: "cream" }];
       });
-    } else if (noteTaskTarget.location === "inbox") {
+    } else if (!storage?.createTask && noteTaskTarget.location === "inbox") {
       setInbox((items) => [...items, task]);
-    } else if (noteTaskTarget.location === "todo") {
+    } else if (!storage?.createTask && noteTaskTarget.location === "todo") {
       setTodo((items) => [...items, task]);
-    } else if (noteTaskTarget.location === "cache") {
+    } else if (!storage?.createTask && noteTaskTarget.location === "cache") {
       setCache((items) => [...items, task]);
-    } else {
+    } else if (!storage?.createTask) {
       const columnId = storeColumns.some(
         (column) => column.id === noteTaskTarget.columnId,
       )
@@ -1079,7 +1119,7 @@ export function TodoWorkspace(
         ),
       );
     }
-    if (object) {
+    if (!storage?.createTask && object) {
       setLongTermObjects((objects) =>
         objects.map((item) =>
           item.id === object.id
@@ -1146,34 +1186,35 @@ export function TodoWorkspace(
       .catch(() => showToast(tr("加载 Canvas 失败")));
   };
 
-  const addStoreTask = (columnId: string) => {
+  const addStoreTask = async (columnId: string) => {
     const title = newStoreTaskTitle.trim();
     if (!title) return;
-    setStoreColumns((columns) =>
-      columns.map((column) =>
+    const task: TaskItem = {
+      id: createId("store"),
+      title,
+      detail: newStoreTaskDetail.trim(),
+      source: "文本",
+      priority: "P3",
+    };
+    try {
+      await storage?.createTask?.(task, { location: "storage", columnId });
+    } catch {
+      showToast(tr("创建“{title}”失败", { title }));
+      return;
+    }
+    if (!storage?.createTask) {
+      setStoreColumns((columns) => columns.map((column) =>
         column.id === columnId
-          ? {
-              ...column,
-              tasks: [
-                ...column.tasks,
-                {
-                  id: createId("store"),
-                  title,
-                  detail: newStoreTaskDetail.trim(),
-                  source: "文本",
-                  priority: "P3",
-                },
-              ],
-            }
+          ? { ...column, tasks: [...column.tasks, task] }
           : column,
-      ),
-    );
+      ));
+    }
     setNewStoreTaskTitle("");
     setNewStoreTaskDetail("");
     setAddingStoreTaskTo(null);
   };
 
-  const addWorkbenchTask = (
+  const addWorkbenchTask = async (
     list: "inbox" | "todo" | "cache",
     title: string,
     detail: string,
@@ -1186,9 +1227,17 @@ export function TodoWorkspace(
       meta: tr("手动加入"),
     };
 
-    if (list === "inbox") setInbox((items) => [...items, task]);
-    if (list === "todo") setTodo((items) => [...items, task]);
-    if (list === "cache") setCache((items) => [...items, task]);
+    try {
+      await storage?.createTask?.(task, { location: list });
+    } catch {
+      showToast(tr("创建“{title}”失败", { title }));
+      return;
+    }
+    if (!storage?.createTask) {
+      if (list === "inbox") setInbox((items) => [...items, task]);
+      if (list === "todo") setTodo((items) => [...items, task]);
+      if (list === "cache") setCache((items) => [...items, task]);
+    }
     showToast(tr("任务已加入工作台"));
   };
 
@@ -1212,17 +1261,11 @@ export function TodoWorkspace(
   const persistCanvasConnections = (
     nextConnections: CanvasConnection[],
   ) => {
-    if (!storage) return;
-    void storage.save({
+    if (!storage?.updateCanvasLayout) return;
+    void storage.updateCanvasLayout({
       canvasCards,
       canvasConnections: nextConnections,
       canvasTextNotes,
-      longTermObjects,
-      inbox,
-      todo,
-      cache,
-      storeColumns,
-      transparentUi,
     });
   };
 
@@ -1321,6 +1364,7 @@ export function TodoWorkspace(
     card: CanvasCard,
   ) => {
     if ((event.target as HTMLElement).closest("button")) return;
+    if (card.readOnlyConflict) return;
     setDeleteConnectionId(null);
     if (canvasTool === "connect") {
       event.preventDefault();
@@ -1393,6 +1437,20 @@ export function TodoWorkspace(
   };
 
   const handleStoreDrop = (columnId: string, taskId: string) => {
+    if (storage?.moveTaskById) {
+      if (!taskId || movingTaskIdsRef.current.has(taskId)) return;
+      movingTaskIdsRef.current.add(taskId);
+      setMovingTaskId(taskId);
+      void Promise.resolve(
+        storage.moveTaskById(taskId, { location: "storage", columnId }),
+      )
+        .catch(() => showToast(tr("移动待办失败")))
+        .finally(() => {
+          movingTaskIdsRef.current.delete(taskId);
+          setMovingTaskId((current) => current === taskId ? null : current);
+        });
+      return;
+    }
     let moved: TaskItem | undefined;
     const stripped = storeColumns.map((column) => ({
       ...column,
@@ -1416,12 +1474,16 @@ export function TodoWorkspace(
 
   const renderStorageTask = (task: TaskItem, columnId: string) => (
     <article
-      className={`kanban-card ${openMenuId === task.id ? "task-menu-open" : ""}`}
+      className={`kanban-card ${task.readOnlyConflict ? "read-only-conflict" : ""} ${openMenuId === task.id ? "task-menu-open" : ""}`}
       key={task.id}
-      draggable={!pendingMove}
-      onDragStart={(event) =>
-        event.dataTransfer.setData("text/task-id", task.id)
-      }
+      draggable={!task.readOnlyConflict && !pendingMove && movingTaskId !== task.id}
+      onDragStart={(event) => {
+        if (task.readOnlyConflict) {
+          event.preventDefault();
+          return;
+        }
+        event.dataTransfer.setData("text/task-id", task.id);
+      }}
     >
       <TaskMenu
         task={task}
@@ -1441,7 +1503,11 @@ export function TodoWorkspace(
       <h3>{task.title}</h3>
       <p>{task.detail}</p>
       <footer>
-        <span>{task.object ? `◎ ${task.object}` : tr("未关联长期对象")}</span>
+        <span title={task.conflictPath}>
+          {task.readOnlyConflict
+            ? tr("ID 冲突 · 只读")
+            : task.object ? `◎ ${task.object}` : tr("未关联长期对象")}
+        </span>
       </footer>
     </article>
   );
@@ -1508,7 +1574,7 @@ export function TodoWorkspace(
         onPointerDown={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
-          saveTaskEditor();
+          void saveTaskEditor();
         }}
       >
         <span className="eyebrow">{tr("编辑任务卡")}</span>
@@ -1596,7 +1662,7 @@ export function TodoWorkspace(
           </div>
           <button
             className="icon-button appearance-toggle"
-            onClick={() => setTransparentUi((value) => !value)}
+            onClick={toggleTransparentUi}
             aria-label={transparentUi ? tr("使用原始配色") : tr("使用透明配色")}
             aria-pressed={transparentUi}
             title={transparentUi ? tr("使用原始配色") : tr("使用透明配色")}
@@ -1739,6 +1805,7 @@ export function TodoWorkspace(
                           {pendingMove?.destination === "storage" && (
                             <button
                               className="choose-target-button"
+                              disabled={movingTaskId === pendingMove.task.id}
                               onClick={() =>
                                 completeMove({ kind: "storage", columnId: column.id })
                               }
@@ -1797,7 +1864,7 @@ export function TodoWorkspace(
             className="dialog-card"
             onSubmit={(event) => {
               event.preventDefault();
-              addPool();
+              void addPool();
             }}
           >
             <span className="eyebrow">{tr("新任务池")}</span>
@@ -1819,7 +1886,7 @@ export function TodoWorkspace(
             className="dialog-card"
             onSubmit={(event) => {
               event.preventDefault();
-              addStoreTask(addingStoreTaskTo);
+              void addStoreTask(addingStoreTaskTo);
             }}
           >
             <span className="eyebrow">{tr("任务存储器")}</span>
@@ -1860,7 +1927,7 @@ export function TodoWorkspace(
             className="dialog-card long-term-object-form"
             onSubmit={(event) => {
               event.preventDefault();
-              addLongTermObject();
+              void addLongTermObject();
             }}
           >
             <span className="eyebrow">{tr("新长期对象")}</span>
@@ -1912,7 +1979,7 @@ export function TodoWorkspace(
             className="dialog-card"
             onSubmit={(event) => {
               event.preventDefault();
-              addRelatedTask();
+              void addRelatedTask();
             }}
           >
             <span className="eyebrow">{tr("关联任务")}</span>
@@ -1981,7 +2048,7 @@ export function TodoWorkspace(
         </div>
         <button
           className="icon-button appearance-toggle"
-          onClick={() => setTransparentUi((value) => !value)}
+          onClick={toggleTransparentUi}
           aria-label={transparentUi ? tr("使用原始配色") : tr("使用透明配色")}
           aria-pressed={transparentUi}
           title={transparentUi ? tr("使用原始配色") : tr("使用透明配色")}
@@ -2074,6 +2141,7 @@ export function TodoWorkspace(
               {pendingMove?.destination === "whiteboard" && (
                 <button
                   className="whiteboard-move-target"
+                  disabled={movingTaskId === pendingMove.task.id}
                   onClick={() => completeMove({ kind: "whiteboard" })}
                 >
                   {tr("＋ 点击这里，把“{title}”添加到白板", { title: pendingMove.task.title })}
@@ -2186,7 +2254,9 @@ export function TodoWorkspace(
                 <article
                   className={`canvas-card tone-${card.tone} ${
                     dragging?.id === card.id && dragging.kind === "card" ? "dragging" : ""
-                  } ${openMenuId === card.id ? "task-menu-open" : ""} ${
+                  } ${card.readOnlyConflict ? "read-only-conflict" : ""} ${
+                    openMenuId === card.id ? "task-menu-open" : ""
+                  } ${
                     connectionStartId === card.id ? "connection-source" : ""
                   } ${canvasTool === "connect" ? "connect-mode" : ""}`}
                   key={card.id}
@@ -2207,40 +2277,40 @@ export function TodoWorkspace(
                     onEdit={openTaskEditor}
                     onOpen={openTaskNote}
                   />
-                  <button
-                    className="canvas-link-handle"
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      startCanvasConnection(card.id);
-                    }}
-                    aria-label={tr("从“{title}”开始连线", { title: card.title })}
-                    title={tr("从此卡片开始连线")}
-                  >
-                    <Icon>↗</Icon>
-                  </button>
+                  {!card.readOnlyConflict && (
+                    <button
+                      className="canvas-link-handle"
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        startCanvasConnection(card.id);
+                      }}
+                      aria-label={tr("从“{title}”开始连线", { title: card.title })}
+                      title={tr("从此卡片开始连线")}
+                    >
+                      <Icon>↗</Icon>
+                    </button>
+                  )}
                   <div className="card-kicker">
                     <span>{card.meta}</span>
                   </div>
                   <h2>{card.title}</h2>
                   <p>{card.detail}</p>
                   <footer>
-                    <button
-                      className={card.done ? "checked" : ""}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={() =>
-                        setCanvasCards((cards) =>
-                          cards.map((item) =>
-                            item.id === card.id ? { ...item, done: !item.done } : item,
-                          ),
-                        )
-                      }
-                    >
-                      {card.done ? tr("✓ 已完成") : tr("○ 完成")}
-                    </button>
+                    {card.readOnlyConflict ? (
+                      <span title={card.conflictPath}>{tr("ID 冲突 · 只读")}</span>
+                    ) : (
+                      <button
+                        className={card.done ? "checked" : ""}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={() => toggleTaskDone(card)}
+                      >
+                        {card.done ? tr("✓ 已完成") : tr("○ 完成")}
+                      </button>
+                    )}
                   </footer>
                 </article>
               ))}
@@ -2275,7 +2345,7 @@ export function TodoWorkspace(
                   className="quick-add-card"
                   onSubmit={(event) => {
                     event.preventDefault();
-                    addCanvasTask();
+                    void addCanvasTask();
                   }}
                 >
                   <span className="eyebrow">{tr("添加到白板")}</span>
@@ -2351,12 +2421,13 @@ export function TodoWorkspace(
                 onAi={() => showToast(tr("AI 接口已预留：整理收集箱"))}
                 origin={{ kind: "inbox" }}
                 isMoveTarget={pendingMove?.destination === "workbench"}
+                moveDisabled={movingTaskId === pendingMove?.task.id}
                 onChooseTarget={() => completeMove({ kind: "workbench", list: "inbox" })}
                 openMenuId={openMenuId}
                 setOpenMenuId={setOpenMenuId}
                 onEditTask={openTaskEditor}
                 beginMove={beginMove}
-                onAddTask={(title, detail) => addWorkbenchTask("inbox", title, detail)}
+                onAddTask={(title, detail) => void addWorkbenchTask("inbox", title, detail)}
                 onLinkNote={() => openNotePicker({ location: "inbox" })}
                 onOpenTask={openTaskNote}
               />
@@ -2369,12 +2440,13 @@ export function TodoWorkspace(
                 onAi={() => showToast(tr("AI 接口已预留：提取待办列表"))}
                 origin={{ kind: "todo" }}
                 isMoveTarget={pendingMove?.destination === "workbench"}
+                moveDisabled={movingTaskId === pendingMove?.task.id}
                 onChooseTarget={() => completeMove({ kind: "workbench", list: "todo" })}
                 openMenuId={openMenuId}
                 setOpenMenuId={setOpenMenuId}
                 onEditTask={openTaskEditor}
                 beginMove={beginMove}
-                onAddTask={(title, detail) => addWorkbenchTask("todo", title, detail)}
+                onAddTask={(title, detail) => void addWorkbenchTask("todo", title, detail)}
                 onLinkNote={() => openNotePicker({ location: "todo" })}
                 onOpenTask={openTaskNote}
               />
@@ -2387,12 +2459,13 @@ export function TodoWorkspace(
                 onAi={() => showToast(tr("AI 接口已预留：清理缓存列表"))}
                 origin={{ kind: "cache" }}
                 isMoveTarget={pendingMove?.destination === "workbench"}
+                moveDisabled={movingTaskId === pendingMove?.task.id}
                 onChooseTarget={() => completeMove({ kind: "workbench", list: "cache" })}
                 openMenuId={openMenuId}
                 setOpenMenuId={setOpenMenuId}
                 onEditTask={openTaskEditor}
                 beginMove={beginMove}
-                onAddTask={(title, detail) => addWorkbenchTask("cache", title, detail)}
+                onAddTask={(title, detail) => void addWorkbenchTask("cache", title, detail)}
                 onLinkNote={() => openNotePicker({ location: "cache" })}
                 onOpenTask={openTaskNote}
               />
@@ -2494,19 +2567,23 @@ function TaskQuickActions({
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
     >
-      <button
-        type="button"
-        onClick={() => onEdit(task)}
-        aria-label={tr("编辑任务：{title}", { title: task.title })}
-        title={tr("编辑任务内容")}
-      >
-        <Icon>✎</Icon>
-      </button>
+      {!task.readOnlyConflict && (
+        <button
+          type="button"
+          onClick={() => onEdit(task)}
+          aria-label={tr("编辑任务：{title}", { title: task.title })}
+          title={tr("编辑任务内容")}
+        >
+          <Icon>✎</Icon>
+        </button>
+      )}
       <button
         type="button"
         onClick={() => onOpen(task)}
         aria-label={tr("打开 Markdown：{title}", { title: task.title })}
-        title={tr("打开对应 Markdown 笔记")}
+        title={task.readOnlyConflict
+          ? tr("打开只读冲突 Markdown")
+          : tr("打开对应 Markdown 笔记")}
       >
         <Icon>↗</Icon>
       </button>
@@ -2531,6 +2608,7 @@ function TaskMenu({
     destination: MoveDestination,
   ) => void;
 }) {
+  if (task.readOnlyConflict) return null;
   const open = openMenuId === task.id;
   return (
     <div
@@ -2578,6 +2656,7 @@ function WorkbenchColumn({
   onAi,
   origin,
   isMoveTarget,
+  moveDisabled,
   onChooseTarget,
   openMenuId,
   setOpenMenuId,
@@ -2595,6 +2674,7 @@ function WorkbenchColumn({
   onAi: () => void;
   origin: TaskOrigin;
   isMoveTarget: boolean;
+  moveDisabled: boolean;
   onChooseTarget: () => void;
   openMenuId: string | null;
   setOpenMenuId: (id: string | null) => void;
@@ -2665,7 +2745,7 @@ function WorkbenchColumn({
         </button>
       </header>
       {isMoveTarget && (
-        <button className="choose-target-button" onClick={onChooseTarget}>
+        <button className="choose-target-button" disabled={moveDisabled} onClick={onChooseTarget}>
           {tr("添加到“{title}”", { title })}
         </button>
       )}
@@ -2673,7 +2753,7 @@ function WorkbenchColumn({
         {items.map((task) => (
           <article
             key={task.id}
-            className={`workbench-card ${openMenuId === task.id ? "task-menu-open" : ""}`}
+            className={`workbench-card ${task.readOnlyConflict ? "read-only-conflict" : ""} ${openMenuId === task.id ? "task-menu-open" : ""}`}
           >
             <TaskMenu
               task={task}
@@ -2693,7 +2773,11 @@ function WorkbenchColumn({
             <h3>{task.title}</h3>
             <p>{task.detail}</p>
             <footer>
-              <span>{task.linkedNotePath ? tr("链接卡片") : tr("Markdown 待办")}</span>
+              <span title={task.conflictPath}>
+                {task.readOnlyConflict
+                  ? tr("ID 冲突 · 只读")
+                  : task.linkedNotePath ? tr("链接卡片") : tr("Markdown 待办")}
+              </span>
             </footer>
           </article>
         ))}
@@ -2770,7 +2854,7 @@ function LongTermObjects({
   const relatedTasks = selected
     ? tasks.filter(
         (task) =>
-          selected.relatedTaskIds.includes(task.id) ||
+          selected.relatedTaskIds.includes(task.conflictOriginalId ?? task.id) ||
           task.object === selected.title,
       )
     : [];
@@ -2812,7 +2896,7 @@ function LongTermObjects({
             {relatedTasks.length ? (
               relatedTasks.map((task) => (
                 <article
-                  className={`kanban-card ${openMenuId === task.id ? "task-menu-open" : ""}`}
+                  className={`kanban-card ${task.readOnlyConflict ? "read-only-conflict" : ""} ${openMenuId === task.id ? "task-menu-open" : ""}`}
                   key={task.id}
                 >
                   <TaskMenu

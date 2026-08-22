@@ -32,22 +32,38 @@ import {
 } from "./i18n";
 import {
   chooseStableMarkdownPath,
-  isNumericConflictBasename,
-  renameOperationKey,
   stableTaskFileStem,
-  stripGeneratedLinkedNoteBacklinks,
 } from "./syncGuards";
+import {
+  compareFileSourceOrder,
+  findDuplicateTaskIds,
+  frontmatterNumber as getNumber,
+  frontmatterString as getString,
+  getFileTaskPlacement as getTaskLocationFromPath,
+  parseFileTask as parseTaskNote,
+  parseFileTaskPool,
+  parseSimpleFrontmatter as parseFrontmatter,
+  resolveCanvasTaskLayout,
+  selectNumericShadowCanonicalPath,
+  serializeFileTask,
+  serializeFileTaskPool,
+  type FileTaskData,
+  type FileTaskLocation,
+  type FileTaskPoolMetadata,
+} from "./fileSource";
 
 const VIEW_TYPE = "four-layer-todo-workspace";
 const NATIVE_CANVAS_FILE_NAME = "任务白板.canvas";
 const NATIVE_CANVAS_TASK_MARKER = "<!-- four-layer-todo-task -->";
 const TASK_POOL_TONES = ["green", "amber", "blue", "violet"];
+const POOL_METADATA_FILE_NAME = "_任务池.md";
+const FILE_SCHEMA_VERSION = 1;
 const DEFAULT_SETTINGS: FourLayerTodoSettings = {
-  markdownSyncEnabled: false,
   taskNotesFolder: "待办",
   language: "auto",
+  transparentUi: false,
+  fileSchemaVersion: 0,
 };
-const GUIDED_SAMPLE_VERSION = 8;
 const GUIDED_CANVAS_CONNECTIONS = [
   {
     id: "guide-connection-focus-next",
@@ -91,36 +107,22 @@ const LEGACY_SAMPLE_IDS = new Set([
 ]);
 
 type FourLayerTodoSettings = {
-  markdownSyncEnabled: boolean;
   taskNotesFolder: string;
   language: LanguageSetting;
-  resetGuidedSample?: boolean;
-  guidedSampleVersion?: number;
+  transparentUi: boolean;
+  fileSchemaVersion: number;
 };
 
 type PluginData = {
   settings?: Partial<FourLayerTodoSettings>;
+};
+
+type LegacyPluginData = PluginData & {
   workspace?: WorkspaceState;
 };
 
-type TaskLocation = "canvas" | "inbox" | "todo" | "cache" | "storage";
-
-type MarkdownTask = {
-  id: string;
-  location: TaskLocation;
-  columnId?: string;
-  title: string;
-  detail: string;
-  source: TaskItem["source"];
-  meta?: string;
-  priority?: TaskItem["priority"];
-  object?: string;
-  x?: number;
-  y?: number;
-  tone?: string;
-  done?: boolean;
-  linkedNotePath?: string;
-};
+type TaskLocation = FileTaskLocation;
+type MarkdownTask = FileTaskData;
 
 type TaskRecord = {
   task: TaskItem;
@@ -131,11 +133,24 @@ type TaskRecord = {
 type IndexedMarkdownTask = {
   file: TFile;
   content: string;
+  task?: MarkdownTask;
 };
 
 type IndexedMarkdownLongTermObject = {
   file: TFile;
   content: string;
+  object?: LongTermObject;
+  sortKey?: number;
+};
+
+type TaskPoolMetadata = FileTaskPoolMetadata;
+
+export type FileIndexDiagnostics = {
+  taskCount: number;
+  objectCount: number;
+  poolCount: number;
+  shadowCopyCount: number;
+  duplicateTaskIds: Array<{ id: string; paths: string[] }>;
 };
 
 type NativeCanvasNode = {
@@ -513,25 +528,6 @@ function removeLegacySampleData(state: WorkspaceState): WorkspaceState {
     : state;
 }
 
-function restoreMissingGuidedConnections(state: WorkspaceState): WorkspaceState {
-  if ((state.canvasConnections ?? []).length > 0) return state;
-
-  const canvasCardIds = new Set(state.canvasCards.map((card) => card.id));
-  const hasGuidedCanvasCards = GUIDED_CANVAS_CONNECTIONS.every(
-    (connection) =>
-      canvasCardIds.has(connection.fromId) &&
-      canvasCardIds.has(connection.toId),
-  );
-
-  return hasGuidedCanvasCards
-    ? { ...state, canvasConnections: clone(GUIDED_CANVAS_CONNECTIONS) }
-    : state;
-}
-
-function markdownValue(value: unknown): string {
-  return JSON.stringify(value ?? null);
-}
-
 function getTaskRecords(state: WorkspaceState): TaskRecord[] {
   return [
     ...state.canvasCards.map((task) => ({ task, location: "canvas" as const })),
@@ -548,46 +544,34 @@ function getTaskRecords(state: WorkspaceState): TaskRecord[] {
   ];
 }
 
-function serializeTaskNote(record: TaskRecord): string {
-  const { task } = record;
-  const detail = stripGeneratedLinkedNoteBacklinks(task.detail);
-  const isCanvasTask = record.location === "canvas";
-
-  return [
-    "---",
-    `fourLayerTodo: true`,
-    `id: ${markdownValue(task.id)}`,
-    `title: ${markdownValue(task.title)}`,
-    `location: ${markdownValue(record.location)}`,
-    `columnId: ${markdownValue(record.columnId)}`,
-    `source: ${markdownValue(task.source)}`,
-    `meta: ${markdownValue(task.meta)}`,
-    `priority: ${markdownValue(task.priority)}`,
-    `object: ${markdownValue(task.object)}`,
-    `linkedNotePath: ${markdownValue(task.linkedNotePath)}`,
-    `x: ${markdownValue(isCanvasTask && "x" in task ? task.x : null)}`,
-    `y: ${markdownValue(isCanvasTask && "y" in task ? task.y : null)}`,
-    `tone: ${markdownValue(isCanvasTask && "tone" in task ? task.tone : null)}`,
-    `done: ${markdownValue(isCanvasTask && "done" in task ? task.done : null)}`,
-    "---",
-    "",
-    task.linkedNotePath
-      ? `${detail}${detail ? "\n\n" : ""}[[${task.linkedNotePath}|关联原笔记]]`
-      : detail,
-    "",
-  ].join("\n");
+function serializeTaskNote(
+  taskOrRecord: TaskItem | TaskRecord,
+  options?: { sortKey: number; objectId?: string },
+): string {
+  const task = "task" in taskOrRecord ? taskOrRecord.task : taskOrRecord;
+  const resolvedOptions = options ?? {
+    sortKey: Date.now(),
+    objectId: undefined,
+  };
+  return serializeFileTask(task, resolvedOptions);
 }
 
-function serializeLongTermObjectNote(object: LongTermObject): string {
+function markdownValue(value: unknown): string {
+  return JSON.stringify(value ?? null);
+}
+
+function serializeLongTermObjectNote(
+  object: LongTermObject,
+  sortKey = Date.now(),
+): string {
   return [
     "---",
     "fourLayerTodoObject: true",
     `id: ${markdownValue(object.id)}`,
-    `title: ${markdownValue(object.title)}`,
     `kind: ${markdownValue(object.kind)}`,
     `activity: ${markdownValue(object.activity)}`,
     `tone: ${markdownValue(object.tone)}`,
-    `relatedTaskIds: ${markdownValue(object.relatedTaskIds)}`,
+    `sortKey: ${markdownValue(sortKey)}`,
     "---",
     "",
     object.description.trim(),
@@ -595,42 +579,8 @@ function serializeLongTermObjectNote(object: LongTermObject): string {
   ].join("\n");
 }
 
-function parseFrontmatter(content: string): Record<string, unknown> | null {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
-  if (!match) return null;
-
-  const values: Record<string, unknown> = {};
-  for (const line of match[1].split(/\r?\n/)) {
-    const entry = line.match(/^([A-Za-z][A-Za-z0-9_-]*):\s*(.*)$/);
-    if (!entry) continue;
-    const [, key, rawValue] = entry;
-    try {
-      values[key] = JSON.parse(rawValue);
-    } catch {
-      values[key] = rawValue.trim();
-    }
-  }
-  return values;
-}
-
-function getString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
-
-function getNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function getLocation(value: unknown): TaskLocation | undefined {
-  return ["canvas", "inbox", "todo", "cache", "storage"].includes(String(value))
-    ? (value as TaskLocation)
-    : undefined;
-}
-
-function getPriority(value: unknown): TaskItem["priority"] | undefined {
-  return ["P2", "P3", "P4", "P5"].includes(String(value))
-    ? (value as TaskItem["priority"])
-    : undefined;
+function serializeTaskPoolMetadata(metadata: TaskPoolMetadata): string {
+  return serializeFileTaskPool(metadata);
 }
 
 function getLongTermObjectKind(
@@ -644,56 +594,6 @@ function getLongTermObjectKind(
   return ["兴趣", "目标", "长期想法"].includes(canonical)
     ? (canonical as LongTermObject["kind"])
     : undefined;
-}
-
-function getStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
-}
-
-function parseTaskNote(
-  content: string,
-  fileTitle: string,
-  filePath?: string,
-): MarkdownTask | null {
-  const frontmatter = parseFrontmatter(content);
-  if (!frontmatter || frontmatter.fourLayerTodo !== true) return null;
-
-  const id = getString(frontmatter.id);
-  const location = getLocation(frontmatter.location);
-  if (!id || !location) return null;
-
-  const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
-  const legacyHeading = body.match(/^#\s+(.+?)(?:\r?\n|$)/);
-  const parsedDetail =
-    legacyHeading?.[1].trim() === fileTitle
-      ? body.slice(legacyHeading[0].length).trim()
-      : body;
-  const storedLinkedNotePath = getString(frontmatter.linkedNotePath);
-  const detail = stripGeneratedLinkedNoteBacklinks(parsedDetail);
-  const linkedNotePath =
-    storedLinkedNotePath === filePath ? undefined : storedLinkedNotePath;
-  const source = ["笔记", "Note"].includes(String(frontmatter.source))
-    ? "笔记"
-    : "文本";
-
-  return {
-    id,
-    location,
-    columnId: getString(frontmatter.columnId),
-    title: getString(frontmatter.title) ?? (fileTitle || tr("未命名待办")),
-    detail,
-    source,
-    meta: getString(frontmatter.meta),
-    priority: getPriority(frontmatter.priority),
-    object: getString(frontmatter.object),
-    linkedNotePath,
-    x: getNumber(frontmatter.x),
-    y: getNumber(frontmatter.y),
-    tone: getString(frontmatter.tone),
-    done: typeof frontmatter.done === "boolean" ? frontmatter.done : undefined,
-  };
 }
 
 function parseLongTermObjectNote(
@@ -716,12 +616,19 @@ function parseLongTermObjectNote(
   return {
     id,
     kind,
-    title: getString(frontmatter.title) ?? (fileTitle || tr("未命名长期对象")),
+    title: fileTitle || tr("未命名长期对象"),
     description: description || tr("暂无说明。"),
     activity: getString(frontmatter.activity) ?? tr("等待关联任务"),
     tone: getString(frontmatter.tone) ?? defaultTone,
-    relatedTaskIds: getStringArray(frontmatter.relatedTaskIds),
+    relatedTaskIds: [],
   };
+}
+
+function parseTaskPoolMetadata(content: string): TaskPoolMetadata | null {
+  return parseFileTaskPool(content, {
+    hint: tr("从 Markdown 任务池同步"),
+    tone: "green",
+  });
 }
 
 function taskFileStem(title: string): string {
@@ -758,37 +665,6 @@ function getTaskFolder(
 
   const column = state.storeColumns.find((item) => item.id === record.columnId);
   return `${rootFolder}/任务存储器/${taskFileStem(column?.title ?? tr("未分类任务池"))}`;
-}
-
-function getTaskPoolTitleFromPath(
-  rootFolder: string,
-  path: string,
-): string | undefined {
-  const prefix = `${rootFolder}/任务存储器/`;
-  if (!path.startsWith(prefix)) return undefined;
-
-  const relativePath = path.slice(prefix.length);
-  const [poolTitle, child] = relativePath.split("/");
-  return poolTitle && child ? poolTitle : undefined;
-}
-
-function getTaskLocationFromPath(
-  rootFolder: string,
-  path: string,
-): Pick<MarkdownTask, "location" | "columnId"> & { poolTitle?: string } | null {
-  if (path.startsWith(`${rootFolder}/白板/`)) return { location: "canvas" };
-  if (path.startsWith(`${rootFolder}/缓存工作台/收集箱/`)) {
-    return { location: "inbox" };
-  }
-  if (path.startsWith(`${rootFolder}/缓存工作台/待办列表/`)) {
-    return { location: "todo" };
-  }
-  if (path.startsWith(`${rootFolder}/缓存工作台/缓存列表/`)) {
-    return { location: "cache" };
-  }
-
-  const poolTitle = getTaskPoolTitleFromPath(rootFolder, path);
-  return poolTitle ? { location: "storage", poolTitle } : null;
 }
 
 class FourLayerTodoView extends ItemView {
@@ -869,7 +745,7 @@ class FourLayerTodoSettingTab extends PluginSettingTab {
     return [
       {
         type: "group",
-        heading: this.plugin.t("Markdown 内容同步"),
+        heading: this.plugin.t("Markdown / Canvas 单一真源"),
         items: [
           {
             name: this.plugin.t("界面语言"),
@@ -882,14 +758,6 @@ class FourLayerTodoSettingTab extends PluginSettingTab {
                 zh: this.plugin.t("中文"),
                 en: this.plugin.t("英文"),
               },
-            },
-          },
-          {
-            name: this.plugin.t("将内容同步为 Markdown"),
-            desc: this.plugin.t("为每张待办卡和长期对象创建可在 Obsidian 中双向编辑的 .md 文件。"),
-            control: {
-              type: "toggle",
-              key: "markdownSyncEnabled",
             },
           },
           {
@@ -908,14 +776,39 @@ class FourLayerTodoSettingTab extends PluginSettingTab {
             },
           },
           {
-            name: this.plugin.t("同步现有待办"),
-            desc: this.plugin.t("将当前待办和长期对象写入配置的文件夹。"),
-            disabled: () => !this.plugin.settings.markdownSyncEnabled,
-            action: () => {
-              void this.plugin.syncMarkdownBidirectionally().then(() => {
-                new Notice(this.plugin.t("四层待办已与 Markdown 文件双向同步"));
-              });
+            name: this.plugin.t("从待办文件夹加载 Markdown 任务"),
+            desc: this.plugin.t("只重新读取带 fourLayerTodo: true 的 Markdown 并刷新页面；不写入、移动、复制或删除任何文件。"),
+            render: (setting) => {
+              setting.addButton((button) => button
+                .setButtonText(this.plugin.t("加载任务"))
+                .setCta()
+                .onClick(async () => {
+                  button
+                    .setDisabled(true)
+                    .setButtonText(this.plugin.t("正在加载…"));
+                  try {
+                    const diagnostics = await this.plugin.loadTasksFromFolder();
+                    button
+                      .setDisabled(false)
+                      .setButtonText(this.plugin.t("加载任务"));
+                    new Notice(this.plugin.t("已从待办文件夹加载 {count} 项任务", {
+                      count: diagnostics.taskCount,
+                    }));
+                    this.update();
+                  } catch (error) {
+                    button
+                      .setDisabled(false)
+                      .setButtonText(this.plugin.t("加载任务"));
+                    new Notice(this.plugin.t("从待办文件夹加载任务失败: {message}", {
+                      message: error instanceof Error ? error.message : String(error),
+                    }));
+                  }
+                }));
             },
+          },
+          {
+            name: this.plugin.t("文件索引状态"),
+            desc: this.plugin.getIndexDiagnosticText(),
           },
         ],
       },
@@ -924,7 +817,6 @@ class FourLayerTodoSettingTab extends PluginSettingTab {
 
   getControlValue(key: string): unknown {
     if (key === "language") return this.plugin.settings.language;
-    if (key === "markdownSyncEnabled") return this.plugin.settings.markdownSyncEnabled;
     if (key === "taskNotesFolder") return this.plugin.settings.taskNotesFolder;
     return undefined;
   }
@@ -935,15 +827,10 @@ class FourLayerTodoSettingTab extends PluginSettingTab {
       this.update();
       return;
     }
-    if (key === "markdownSyncEnabled" && typeof value === "boolean") {
-      this.plugin.settings.markdownSyncEnabled = value;
-      await this.plugin.saveSettings(value);
-      this.refreshDomState();
-      return;
-    }
     if (key === "taskNotesFolder" && typeof value === "string") {
       this.plugin.settings.taskNotesFolder = value;
-      await this.plugin.saveSettings(false);
+      await this.plugin.saveSettings();
+      await this.plugin.refreshFileIndex();
     }
   }
 
@@ -957,128 +844,77 @@ export default class FourLayerTodoPlugin extends Plugin {
     (state: Partial<WorkspaceState>) => void
   >();
   private readonly taskPaths = new Map<string, string>();
+  private readonly conflictDisplayTasks = new Map<
+    string,
+    { originalId: string; path: string; paths: string[] }
+  >();
   private readonly longTermObjectPaths = new Map<string, string>();
-  private readonly pendingMarkdownWrites = new Map<string, string>();
-  private readonly pendingNativeCanvasWrites = new Map<string, string>();
-  // Obsidian emits rename events for the plugin's own folder/title sync. Track
-  // exact old/new path pairs so unrelated Sync conflict renames are never
-  // mistaken for plugin writes and fed back into another rename cycle.
-  private readonly pendingMarkdownRenames = new Set<string>();
-  private workspaceSaveQueue: Promise<void> = Promise.resolve();
   private markdownEventQueue: Promise<void> = Promise.resolve();
-  private skipNextNativeCanvasSync = false;
-  // Every Markdown mutation shares this queue so a card move cannot race a
-  // workspace save or a Vault event for the same note.
+  // Every file mutation shares this queue so a card move cannot race another
+  // command or a Vault event refresh.
   private markdownMutationQueue: Promise<void> = Promise.resolve();
+  private manualTaskLoad: Promise<FileIndexDiagnostics> | null = null;
+  private readonly taskMetadata = new Map<
+    string,
+    { sortKey: number; objectId?: string }
+  >();
+  private duplicateTaskPaths = new Map<string, string[]>();
+  private diagnostics: FileIndexDiagnostics = {
+    taskCount: 0,
+    objectCount: 0,
+    poolCount: 0,
+    shadowCopyCount: 0,
+    duplicateTaskIds: [],
+  };
 
   async onload(): Promise<void> {
-    const data = (await this.loadData()) as PluginData | null;
-    this.settings = { ...DEFAULT_SETTINGS, ...data?.settings };
+    const data = (await this.loadData()) as LegacyPluginData | null;
+    this.settings = {
+      taskNotesFolder:
+        data?.settings?.taskNotesFolder ?? DEFAULT_SETTINGS.taskNotesFolder,
+      language: data?.settings?.language ?? DEFAULT_SETTINGS.language,
+      transparentUi:
+        data?.settings?.transparentUi ?? data?.workspace?.transparentUi ?? false,
+      fileSchemaVersion:
+        data?.settings?.fileSchemaVersion ?? DEFAULT_SETTINGS.fileSchemaVersion,
+    };
     this.locale = resolveLocale(this.settings.language, getLanguage());
     setActiveLocale(this.locale);
-    this.workspaceState = data?.workspace ? clone(data.workspace) : null;
-    if (this.workspaceState) {
-      const cleanedState = removeLegacySampleData(this.workspaceState);
-      if (cleanedState !== this.workspaceState) {
-        this.workspaceState = cleanedState;
+    const legacyWorkspace = data?.workspace
+      ? removeLegacySampleData(clone(data.workspace))
+      : null;
+    try {
+      await this.ensureFileSourceStructure();
+      if (this.settings.fileSchemaVersion < FILE_SCHEMA_VERSION) {
+        await this.migrateLegacyWorkspace(legacyWorkspace);
       }
-    }
-
-    if (this.settings.resetGuidedSample || !this.workspaceState) {
-      this.restoreGuidedSample();
-      this.settings.resetGuidedSample = false;
-      this.settings.guidedSampleVersion = GUIDED_SAMPLE_VERSION;
+      await this.refreshFileIndex(false);
       await this.persistWorkspace();
-      if (this.settings.markdownSyncEnabled) {
-        try {
-          await this.syncWorkspaceToMarkdown();
-          await this.refreshMarkdownPaths();
-        } catch (error) {
-          console.error("四层待办: guided sample sync error", error);
-          new Notice(this.t("示例已恢复，但 Markdown 同步失败。请在设置中重试同步。"));
-        }
-      }
-    } else {
-      if (this.settings.guidedSampleVersion !== GUIDED_SAMPLE_VERSION) {
-        const migratedState = restoreMissingGuidedConnections(
-          this.workspaceState,
-        );
-        this.workspaceState = migratedState;
-      }
-      this.settings.resetGuidedSample = false;
-      this.settings.guidedSampleVersion = GUIDED_SAMPLE_VERSION;
-      await this.persistWorkspace();
+    } catch (error) {
+      console.error("四层待办: file-source migration failed", error);
+      new Notice(this.t("四层待办文件迁移失败；旧 data.json 已保留。"));
+      throw error;
     }
-
-    if (
-      !this.settings.resetGuidedSample &&
-      this.workspaceState &&
-      this.settings.markdownSyncEnabled
-    ) {
-      try {
-        await this.enqueueMarkdownMutation(async () => {
-          await this.syncMarkdownToWorkspace();
-          await this.refreshMarkdownPaths();
-        });
-      } catch (error) {
-        console.error("四层待办: markdown startup sync error", error);
-      }
-    }
-
-    await this.loadDefaultNativeCanvas();
 
     this.registerView(VIEW_TYPE, (leaf) => new FourLayerTodoView(leaf, this));
     this.addSettingTab(new FourLayerTodoSettingTab(this));
-    this.registerEvent(
-      this.app.vault.on("modify", (file) => {
-        if (file instanceof TFile) {
-          if (file.extension === "canvas" && this.isTaskNativeCanvas(file.path)) {
-            this.queueMarkdownEvent(() => this.importNativeCanvas(file));
-            return;
-          }
-          this.queueMarkdownEvent(() => this.importMarkdownNote(file));
-        }
-      }),
-    );
-    this.registerEvent(
-      this.app.vault.on("create", (file) => {
-        if (file instanceof TFile) {
-          if (file.extension === "canvas" && this.isTaskNativeCanvas(file.path)) {
-            this.queueMarkdownEvent(() => this.importNativeCanvas(file));
-            return;
-          }
-          this.queueMarkdownEvent(() => this.importMarkdownNote(file));
-        }
-        if (file instanceof TFolder) {
-          this.queueMarkdownEvent(() => this.importTaskPoolFolder(file));
-        }
-      }),
-    );
-    this.registerEvent(
-      this.app.vault.on("delete", (file) => {
-        if (file instanceof TFile) {
-          this.queueMarkdownEvent(() => this.removeDeletedMarkdownNote(file));
-        }
-        if (file instanceof TFolder) {
-          this.queueMarkdownEvent(() => this.removeDeletedTaskPoolFolder(file));
-        }
-      }),
-    );
-    this.registerEvent(
-      this.app.vault.on("rename", (file, oldPath) => {
-        if (file instanceof TFile) {
-          const newPath = file.path;
-          this.queueMarkdownEvent(() =>
-            this.updateRenamedMarkdownNote(file, oldPath, newPath),
-          );
-        }
-        if (file instanceof TFolder) {
-          this.queueMarkdownEvent(() =>
-            this.updateRenamedTaskPoolFolder(file, oldPath),
-          );
-        }
-      }),
-    );
+    const scheduleIfRelevant = (path: string, oldPath?: string) => {
+      const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
+      if (
+        path === folder ||
+        path.startsWith(`${folder}/`) ||
+        oldPath === folder ||
+        oldPath?.startsWith(`${folder}/`)
+      ) {
+        this.queueFileRefresh();
+      }
+    };
+    this.registerEvent(this.app.vault.on("modify", (file) => scheduleIfRelevant(file.path)));
+    this.registerEvent(this.app.vault.on("create", (file) => scheduleIfRelevant(file.path)));
+    this.registerEvent(this.app.vault.on("delete", (file) => scheduleIfRelevant(file.path)));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      scheduleIfRelevant(file.path, oldPath);
+    }));
 
     this.addRibbonIcon("layers", this.t("打开四层待办"), () => {
       this.activateView().catch((error) => {
@@ -1111,6 +947,10 @@ export default class FourLayerTodoPlugin extends Plugin {
     }
   }
 
+  onunload(): void {
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE);
+  }
+
   getIconResourcePath(): string {
     return todoIconDataUrl;
   }
@@ -1124,7 +964,7 @@ export default class FourLayerTodoPlugin extends Plugin {
     this.settings.language = language;
     this.locale = resolveLocale(language, getLanguage());
     setActiveLocale(this.locale);
-    await this.saveSettings(false);
+    await this.saveSettings();
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
       if (leaf.view instanceof FourLayerTodoView) leaf.view.refreshLocale();
     }
@@ -1132,19 +972,23 @@ export default class FourLayerTodoPlugin extends Plugin {
 
   getWorkspaceStorage(): WorkspaceStorage {
     return {
-      load: () => this.loadWorkspace(),
-      save: (state) => this.saveWorkspace(state),
-      archiveTask: (taskId) => this.archiveMarkdownTask(taskId),
-      isMarkdownSyncEnabled: () => this.settings.markdownSyncEnabled,
-      deleteTask: (taskId) => this.deleteMarkdownTask(taskId),
+      loadSnapshot: () => this.loadWorkspace(),
+      createTask: (task, target) => this.createFileTask(task, target),
+      updateTask: (task) => this.updateFileTask(task),
+      createPool: (column) => this.createFilePool(column),
+      createLongTermObject: (object) => this.createFileLongTermObject(object),
+      updateCanvasLayout: (state) => this.updateFileCanvasLayout(state),
+      setTransparentUi: (value) => this.setTransparentUi(value),
+      archiveTask: (taskId) => this.archiveFileTask(taskId),
+      deleteTask: (taskId) => this.deleteFileTask(taskId),
       searchNotes: (query) => this.searchNotes(query),
-      moveTaskNote: (path, target) => this.moveTaskNote(path, target),
-      moveTaskById: (taskId, target) => this.moveTaskById(taskId, target),
+      moveTaskNote: (path, target) => this.moveFileTaskNote(path, target),
+      moveTaskById: (taskId, target) => this.moveFileTaskById(taskId, target),
       openNote: (path) => this.openNote(path),
       openTaskNote: (taskId) => this.openTaskNote(taskId),
       openNativeCanvas: () => this.openNativeCanvas(),
       listNativeCanvases: () => this.listNativeCanvases(),
-      loadNativeCanvas: (path) => this.loadNativeCanvas(path),
+      loadNativeCanvas: (path) => this.loadCanvasLayoutOnly(path),
       subscribe: (listener) => {
         this.workspaceListeners.add(listener);
         return () => this.workspaceListeners.delete(listener);
@@ -1152,19 +996,8 @@ export default class FourLayerTodoPlugin extends Plugin {
     };
   }
 
-  async saveSettings(syncMarkdown: boolean): Promise<void> {
+  async saveSettings(): Promise<void> {
     await this.persistWorkspace();
-    if (syncMarkdown && this.settings.markdownSyncEnabled) {
-      await this.syncMarkdownBidirectionally();
-    }
-  }
-
-  async syncMarkdownBidirectionally(): Promise<void> {
-    return this.enqueueMarkdownMutation(async () => {
-      await this.syncMarkdownToWorkspace();
-      await this.syncWorkspaceToMarkdownInternal();
-      await this.refreshMarkdownPaths();
-    });
   }
 
   private enqueueMarkdownMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -1186,129 +1019,44 @@ export default class FourLayerTodoPlugin extends Plugin {
     return Boolean(folder) && folder !== normalizePath(this.app.vault.configDir);
   }
 
-  private async syncWorkspaceToMarkdownInternal(): Promise<void> {
-    if (!this.settings.markdownSyncEnabled || !this.workspaceState) return;
-
-    const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    if (!this.taskFolderIsUsable(folder)) {
-      new Notice(this.t("待办笔记文件夹不能留空或使用 Obsidian 配置文件夹"));
-      return;
-    }
-
-    await this.ensureTaskFolderStructure(folder);
-    for (const column of this.workspaceState.storeColumns) {
-      await this.ensureFolder(
-        `${folder}/任务存储器/${taskFileStem(column.title)}`,
-      );
-    }
-    const existingTasks = await this.indexMarkdownTasks(folder);
-    const existingObjects = await this.indexMarkdownLongTermObjects(folder);
-    const records = getTaskRecords(this.workspaceState);
-
-    for (const record of records) {
-      const content = serializeTaskNote(record);
-      const known = existingTasks.get(record.task.id);
-      const taskFolder = getTaskFolder(folder, record, this.workspaceState);
-      await this.ensureFolder(taskFolder);
-
-      if (known) {
-        const file = await this.moveMarkdownTaskFile(
-          known.file,
-          taskFolder,
-          record.task.title,
-          record.task.id,
-        );
-        this.taskPaths.set(record.task.id, file.path);
-        const currentContent =
-          file.path === known.file.path
-            ? known.content
-            : await this.app.vault.read(file);
-        if (currentContent !== content) {
-          await this.writeMarkdownTask(file, content);
-        }
-        continue;
-      }
-
-      const file = await this.createMarkdownTaskFile(
-        taskFolder,
-        record.task.title,
-        content,
-      );
-      this.taskPaths.set(record.task.id, file.path);
-    }
-
-    const objectFolder = `${folder}/长期对象`;
-    for (const object of this.workspaceState.longTermObjects ?? []) {
-      const content = serializeLongTermObjectNote(object);
-      const known = existingObjects.get(object.id);
-
-      if (known) {
-        const file = await this.moveMarkdownTaskFile(
-          known.file,
-          objectFolder,
-          object.title,
-        );
-        this.longTermObjectPaths.set(object.id, file.path);
-        const currentContent =
-          file.path === known.file.path
-            ? known.content
-            : await this.app.vault.read(file);
-        if (currentContent !== content) {
-          await this.writeMarkdownTask(file, content);
-        }
-        continue;
-      }
-
-      const file = await this.createMarkdownTaskFile(
-        objectFolder,
-        object.title,
-        content,
-      );
-      this.longTermObjectPaths.set(object.id, file.path);
-    }
-  }
-
-  async syncWorkspaceToMarkdown(): Promise<void> {
-    return this.enqueueMarkdownMutation(() => this.syncWorkspaceToMarkdownInternal());
-  }
-
-  private queueMarkdownEvent(operation: () => Promise<void>): void {
-    this.markdownEventQueue = this.markdownEventQueue
-      .catch(() => undefined)
-      .then(async () => {
-        await this.waitForMarkdownMutations();
-        await operation();
-      })
-      .catch((error) => {
-        console.error("四层待办: markdown reverse sync error", error);
-      });
-  }
-
   private loadWorkspace(): Promise<Partial<WorkspaceState> | null> {
     return Promise.resolve(this.workspaceState ? clone(this.workspaceState) : null);
   }
 
-  private saveWorkspace(state: WorkspaceState): Promise<void> {
-    const nextState = clone(state);
-    this.workspaceSaveQueue = this.workspaceSaveQueue
-      .catch(() => undefined)
-      .then(async () => {
-        this.workspaceState = nextState;
-        await this.persistWorkspace();
-        await this.syncWorkspaceToMarkdown();
-        const skipNativeCanvasSync = this.skipNextNativeCanvasSync;
-        this.skipNextNativeCanvasSync = false;
-        if (!skipNativeCanvasSync) {
-          await this.syncNativeCanvas();
-        }
-      });
-    return this.workspaceSaveQueue;
+  loadTasksFromFolder(): Promise<FileIndexDiagnostics> {
+    if (this.manualTaskLoad) return this.manualTaskLoad;
+    const load = (async () => {
+      await this.waitForMarkdownMutations();
+      const rootFolder = normalizeTaskFolder(this.settings.taskNotesFolder);
+      if (!this.taskFolderIsUsable(rootFolder)) {
+        throw new Error(this.t("待办笔记文件夹不能留空或使用 Obsidian 配置文件夹"));
+      }
+      if (!(this.app.vault.getAbstractFileByPath(rootFolder) instanceof TFolder)) {
+        throw new Error(this.t("待办文件夹不存在: {path}", { path: rootFolder }));
+      }
+      await this.refreshFileIndex(true, false);
+      return clone(this.diagnostics);
+    })();
+    this.manualTaskLoad = load;
+    void load.then(
+      () => {
+        if (this.manualTaskLoad === load) this.manualTaskLoad = null;
+      },
+      () => {
+        if (this.manualTaskLoad === load) this.manualTaskLoad = null;
+      },
+    );
+    return load;
   }
 
   private async persistWorkspace(): Promise<void> {
     await this.saveData({
-      settings: this.settings,
-      workspace: this.workspaceState ?? undefined,
+      settings: {
+        taskNotesFolder: this.settings.taskNotesFolder,
+        language: this.settings.language,
+        transparentUi: this.settings.transparentUi,
+        fileSchemaVersion: this.settings.fileSchemaVersion,
+      },
     } satisfies PluginData);
   }
 
@@ -1354,228 +1102,778 @@ export default class FourLayerTodoPlugin extends Plugin {
     }
   }
 
-  private async refreshMarkdownPaths(): Promise<void> {
+  private async ensureFileSourceStructure(): Promise<void> {
     const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    if (!folder) return;
-
-    const taskNotes = await this.indexMarkdownTasks(folder);
-    const objectNotes = await this.indexMarkdownLongTermObjects(folder);
-    this.taskPaths.clear();
-    this.longTermObjectPaths.clear();
-    for (const [taskId, note] of taskNotes) {
-      if (isLegacySampleId(taskId)) continue;
-      this.taskPaths.set(taskId, note.file.path);
+    if (!this.taskFolderIsUsable(folder)) {
+      throw new Error(this.t("待办笔记文件夹不能留空或使用 Obsidian 配置文件夹"));
     }
-    for (const [objectId, note] of objectNotes) {
-      if (isLegacySampleId(objectId)) continue;
-      this.longTermObjectPaths.set(objectId, note.file.path);
+    await this.ensureTaskFolderStructure(folder);
+  }
+
+  getIndexDiagnosticText(): string {
+    const summary = this.t("已索引 {tasks} 项任务、{objects} 个长期对象、{pools} 个任务池。", {
+      tasks: this.diagnostics.taskCount,
+      objects: this.diagnostics.objectCount,
+      pools: this.diagnostics.poolCount,
+    });
+    if (!this.diagnostics.duplicateTaskIds.length) {
+      return `${summary} ${this.t("没有活跃重复 ID。")} ${this.t("已忽略 {count} 个同目录数字后缀影子副本。", {
+        count: this.diagnostics.shadowCopyCount,
+      })}`;
     }
+    const conflicts = this.diagnostics.duplicateTaskIds
+      .map((item) => `${item.id}: ${item.paths.join(" · ")}`)
+      .join("\n");
+    return `${summary} ${this.t("已忽略 {count} 个同目录数字后缀影子副本。", {
+      count: this.diagnostics.shadowCopyCount,
+    })}\n${this.t("以下重复 ID 已隔离，插件不会移动或编辑这些文件：")}\n${conflicts}`;
   }
 
-  private getTaskPoolFolders(rootFolder: string): TFolder[] {
-    const storageFolder = `${rootFolder}/任务存储器`;
-    return this.app.vault
-      .getAllLoadedFiles()
-      .filter(
-        (file): file is TFolder =>
-          file instanceof TFolder && file.parent?.path === storageFolder,
-      );
+  private queueFileRefresh(): void {
+    this.markdownEventQueue = this.markdownEventQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await this.waitForMarkdownMutations();
+        await this.refreshFileIndex();
+      })
+      .catch((error) => {
+        console.error("四层待办: file index refresh failed", error);
+      });
   }
 
-  private ensureTaskPoolColumn(
-    state: WorkspaceState,
-    poolTitle: string,
-    preferredColumnId?: string,
-  ): { state: WorkspaceState; columnId: string; changed: boolean } {
-    const existing = state.storeColumns.find(
-      (column) => taskFileStem(column.title) === poolTitle,
-    );
-    if (existing) return { state, columnId: existing.id, changed: false };
-
-    const columnId =
-      preferredColumnId &&
-      !state.storeColumns.some((column) => column.id === preferredColumnId)
-        ? preferredColumnId
-        : createManagedTaskId().replace(/^task-/, "pool-");
-    const nextColumn = {
-      id: columnId,
-      title: poolTitle,
-      hint: tr("从 Markdown 任务池同步"),
-      tone: TASK_POOL_TONES[state.storeColumns.length % TASK_POOL_TONES.length],
-      tasks: [],
-    };
-    return {
-      state: { ...clone(state), storeColumns: [...state.storeColumns, nextColumn] },
-      columnId,
-      changed: true,
-    };
-  }
-
-  private placeMarkdownTaskFromPath(
-    state: WorkspaceState,
-    task: MarkdownTask,
-    path: string,
+  private async scanActiveTaskGroups(
     rootFolder: string,
-  ): { state: WorkspaceState; task: MarkdownTask } {
-    const placement = getTaskLocationFromPath(rootFolder, path);
-    if (!placement) return { state, task };
-    if (placement.location !== "storage" || !placement.poolTitle) {
-      return {
-        state,
-        task: { ...task, location: placement.location, columnId: undefined },
-      };
+  ): Promise<Map<string, IndexedMarkdownTask[]>> {
+    const groups = new Map<string, IndexedMarkdownTask[]>();
+    const files = this.app.vault.getMarkdownFiles().filter((file) => {
+      if (!file.path.startsWith(`${rootFolder}/`)) return false;
+      if (this.isArchivedMarkdownPath(file.path)) return false;
+      if (file.path.startsWith(`${rootFolder}/长期对象/`)) return false;
+      if (file.name === POOL_METADATA_FILE_NAME) return false;
+      return getTaskLocationFromPath(rootFolder, file.path) !== null;
+    });
+    for (const file of files) {
+      const content = await this.app.vault.read(file);
+      const task = parseTaskNote(content, file.basename, file.path);
+      if (!task || isLegacySampleId(task.id)) continue;
+      const entries = groups.get(task.id) ?? [];
+      entries.push({ file, content, task });
+      groups.set(task.id, entries);
     }
-
-    const pool = this.ensureTaskPoolColumn(
-      state,
-      placement.poolTitle,
-      task.columnId,
-    );
-    return {
-      state: pool.state,
-      task: { ...task, location: "storage", columnId: pool.columnId },
-    };
+    return groups;
   }
 
-  private async syncMarkdownToWorkspace(): Promise<void> {
-    if (!this.settings.markdownSyncEnabled || !this.workspaceState) return;
-    const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    if (!folder) return;
-
-    let state = this.workspaceState;
-    for (const poolFolder of this.getTaskPoolFolders(folder)) {
-      state = this.ensureTaskPoolColumn(state, poolFolder.name).state;
+  private async scanLongTermObjects(
+    rootFolder: string,
+  ): Promise<IndexedMarkdownLongTermObject[]> {
+    const objectFolder = `${rootFolder}/长期对象/`;
+    const entries: IndexedMarkdownLongTermObject[] = [];
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!file.path.startsWith(objectFolder)) continue;
+      const content = await this.app.vault.read(file);
+      const object = parseLongTermObjectNote(content, file.basename);
+      if (!object || isLegacySampleId(object.id)) continue;
+      const frontmatter = parseFrontmatter(content);
+      entries.push({
+        file,
+        content,
+        object,
+        sortKey: getNumber(frontmatter?.sortKey) ?? getNumber(frontmatter?.order) ?? file.stat.ctime,
+      });
     }
-
-    const taskNotes = await this.indexMarkdownTasks(folder);
-    this.taskPaths.clear();
-    for (const [taskId, note] of taskNotes) {
-      if (isLegacySampleId(taskId)) continue;
-      const parsed = parseTaskNote(
-        note.content,
-        note.file.basename,
-        note.file.path,
-      );
-      if (!parsed) continue;
-      const placed = this.placeMarkdownTaskFromPath(
-        state,
-        parsed,
-        note.file.path,
-        folder,
-      );
-      state = this.upsertMarkdownTask(placed.state, placed.task);
-      this.taskPaths.set(taskId, note.file.path);
-    }
-
-    const objectNotes = await this.indexMarkdownLongTermObjects(folder);
-    this.longTermObjectPaths.clear();
-    for (const [objectId, note] of objectNotes) {
-      if (isLegacySampleId(objectId)) continue;
-      const object = parseLongTermObjectNote(note.content, note.file.basename);
-      if (!object) continue;
-      state = this.upsertMarkdownLongTermObject(state, object);
-      this.longTermObjectPaths.set(objectId, note.file.path);
-    }
-
-    this.workspaceState = state;
-    await this.persistWorkspace();
-    this.emitWorkspace();
+    return entries;
   }
 
-  private async importTaskPoolFolder(folder: TFolder): Promise<void> {
-    if (!this.settings.markdownSyncEnabled || !this.workspaceState) return;
-    const rootFolder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    if (folder.parent?.path !== `${rootFolder}/任务存储器`) return;
-
-    const pool = this.ensureTaskPoolColumn(this.workspaceState, folder.name);
-    if (!pool.changed) return;
-    this.workspaceState = pool.state;
-    await this.persistWorkspace();
-    this.emitWorkspace();
-  }
-
-  private async updateRenamedTaskPoolFolder(
+  private async readPoolMetadata(
     folder: TFolder,
-    oldPath: string,
-  ): Promise<void> {
-    if (!this.settings.markdownSyncEnabled || !this.workspaceState) return;
-    const rootFolder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    const storageFolder = `${rootFolder}/任务存储器`;
-    const oldParent = oldPath.slice(0, oldPath.lastIndexOf("/"));
-    const newParent = folder.parent?.path;
-    if (oldParent !== storageFolder && newParent === storageFolder) {
-      await this.importTaskPoolFolder(folder);
-      return;
+    index: number,
+  ): Promise<TaskPoolMetadata> {
+    const path = `${folder.path}/${POOL_METADATA_FILE_NAME}`;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (file instanceof TFile) {
+      const parsed = parseTaskPoolMetadata(await this.app.vault.read(file));
+      if (parsed) return parsed;
     }
-    if (oldParent === storageFolder && newParent !== storageFolder) {
-      await this.removeTaskPoolColumnByTitle(
-        oldPath.slice(oldPath.lastIndexOf("/") + 1),
+    return {
+      hint: this.t("从 Markdown 任务池同步"),
+      tone: TASK_POOL_TONES[index % TASK_POOL_TONES.length],
+      sortKey: index * 1000,
+    };
+  }
+
+  private async readCanvasLayoutFromFile(
+    path: string,
+    whiteboardPathToTaskId: Map<string, string>,
+  ): Promise<{
+    cards: Map<string, { x: number; y: number; tone: string }>;
+    connections: NonNullable<WorkspaceState["canvasConnections"]>;
+    textNotes: NonNullable<WorkspaceState["canvasTextNotes"]>;
+  }> {
+    const empty = {
+      cards: new Map<string, { x: number; y: number; tone: string }>(),
+      connections: [] as NonNullable<WorkspaceState["canvasConnections"]>,
+      textNotes: [] as NonNullable<WorkspaceState["canvasTextNotes"]>,
+    };
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return empty;
+    try {
+      const raw = JSON.parse(await this.app.vault.read(file)) as {
+        nodes?: unknown;
+        edges?: unknown;
+      };
+      if (!Array.isArray(raw.nodes)) return empty;
+      const nodeToTaskId = new Map<string, string>();
+      for (const rawNode of raw.nodes) {
+        if (!rawNode || typeof rawNode !== "object") continue;
+        const node = rawNode as Record<string, unknown>;
+        const nodeId = getString(node.id);
+        const type = getString(node.type);
+        if (!nodeId) continue;
+        if (type === "file") {
+          const notePath = getString(node.file);
+          const taskId = notePath ? whiteboardPathToTaskId.get(notePath) : undefined;
+          if (!taskId) continue;
+          const color = getString(node.color);
+          const tone = color === "4"
+            ? "sage"
+            : color === "6"
+              ? "lavender"
+              : color === "5"
+                ? "blue"
+                : "cream";
+          empty.cards.set(taskId, {
+            x: getNumber(node.x) ?? 40,
+            y: getNumber(node.y) ?? 100,
+            tone,
+          });
+          nodeToTaskId.set(nodeId, taskId);
+          continue;
+        }
+        if (type === "text") {
+          const text = getString(node.text) ?? "";
+          if (text.startsWith(NATIVE_CANVAS_TASK_MARKER)) continue;
+          empty.textNotes.push({
+            id: nodeId,
+            content: text,
+            x: getNumber(node.x) ?? 40,
+            y: getNumber(node.y) ?? 100,
+          });
+        }
+      }
+      if (Array.isArray(raw.edges)) {
+        empty.connections = raw.edges.flatMap((rawEdge) => {
+          if (!rawEdge || typeof rawEdge !== "object") return [];
+          const edge = rawEdge as Record<string, unknown>;
+          const id = getString(edge.id);
+          const fromId = nodeToTaskId.get(getString(edge.fromNode) ?? "");
+          const toId = nodeToTaskId.get(getString(edge.toNode) ?? "");
+          return id && fromId && toId ? [{ id, fromId, toId }] : [];
+        });
+      }
+      return empty;
+    } catch (error) {
+      console.error("四层待办: Canvas layout read failed", error);
+      return empty;
+    }
+  }
+
+  async refreshFileIndex(emit = true, ensureStructure = true): Promise<void> {
+    if (ensureStructure) await this.ensureFileSourceStructure();
+    const rootFolder = normalizeTaskFolder(this.settings.taskNotesFolder);
+    const groups = await this.scanActiveTaskGroups(rootFolder);
+    let shadowCopyCount = 0;
+    for (const [id, entries] of groups) {
+      const canonicalPath = selectNumericShadowCanonicalPath(
+        entries.map((entry) => entry.file.path),
       );
-      return;
+      if (!canonicalPath) continue;
+      const canonical = entries.find((entry) => entry.file.path === canonicalPath);
+      if (!canonical) continue;
+      shadowCopyCount += entries.length - 1;
+      groups.set(id, [canonical]);
     }
-    if (oldParent !== storageFolder || newParent !== storageFolder) return;
-
-    const oldTitle = oldPath.slice(oldPath.lastIndexOf("/") + 1);
-    const column = this.workspaceState.storeColumns.find(
-      (item) => taskFileStem(item.title) === oldTitle,
+    this.duplicateTaskPaths = new Map(
+      findDuplicateTaskIds(
+        [...groups.entries()].flatMap(([id, entries]) =>
+          entries.map((entry) => ({ id, path: entry.file.path })),
+        ),
+      ).map((conflict) => [conflict.id, conflict.paths]),
     );
-    if (!column) {
-      await this.importTaskPoolFolder(folder);
-      return;
+
+    const objectEntries = await this.scanLongTermObjects(rootFolder);
+    const uniqueObjects = new Map<string, IndexedMarkdownLongTermObject>();
+    for (const entry of objectEntries.sort((left, right) =>
+      (left.sortKey ?? 0) - (right.sortKey ?? 0) || left.file.path.localeCompare(right.file.path)
+    )) {
+      if (entry.object && !uniqueObjects.has(entry.object.id)) {
+        uniqueObjects.set(entry.object.id, entry);
+      }
     }
-
-    this.workspaceState = {
-      ...clone(this.workspaceState),
-      storeColumns: this.workspaceState.storeColumns.map((item) =>
-        item.id === column.id ? { ...item, title: folder.name } : item,
-      ),
-    };
-    await this.persistWorkspace();
-    this.emitWorkspace();
-  }
-
-  private async removeDeletedTaskPoolFolder(folder: TFolder): Promise<void> {
-    if (!this.settings.markdownSyncEnabled || !this.workspaceState) return;
-    const rootFolder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    const storagePrefix = `${rootFolder}/任务存储器/`;
-    if (!folder.path.startsWith(storagePrefix)) return;
-    const poolTitle = folder.path.slice(storagePrefix.length);
-    if (!poolTitle || poolTitle.includes("/")) return;
-
-    await this.removeTaskPoolColumnByTitle(poolTitle);
-  }
-
-  private async removeTaskPoolColumnByTitle(poolTitle: string): Promise<void> {
-    if (!this.workspaceState) return;
-    const column = this.workspaceState.storeColumns.find(
-      (item) => taskFileStem(item.title) === poolTitle,
+    const objectTitleById = new Map(
+      [...uniqueObjects.entries()].map(([id, entry]) => [id, entry.object?.title ?? entry.file.basename]),
     );
-    if (!column || column.tasks.length > 0) return;
-    this.workspaceState = {
-      ...clone(this.workspaceState),
-      storeColumns: this.workspaceState.storeColumns.filter(
-        (item) => item.id !== column.id,
-      ),
-    };
-    await this.persistWorkspace();
-    this.emitWorkspace();
-  }
+    const objectIdByTitle = new Map(
+      [...objectTitleById.entries()].map(([id, title]) => [title, id]),
+    );
 
-  private restoreGuidedSample(): void {
+    const storageRoot = `${rootFolder}/任务存储器`;
+    const poolFolders = this.app.vault.getAllLoadedFiles().filter(
+      (file): file is TFolder =>
+        file instanceof TFolder && file.parent?.path === storageRoot,
+    );
+    const poolEntries = await Promise.all(poolFolders.map(async (folder, index) => ({
+      folder,
+      metadata: await this.readPoolMetadata(folder, index),
+    })));
+    poolEntries.sort((left, right) =>
+      left.metadata.sortKey - right.metadata.sortKey ||
+      left.folder.name.localeCompare(right.folder.name, "zh-Hans-CN")
+    );
+    const storeColumns = poolEntries.map(({ folder, metadata }) => ({
+      id: folder.path,
+      title: folder.name,
+      hint: metadata.hint,
+      tone: metadata.tone,
+      tasks: [] as TaskItem[],
+    }));
+    const columnByPath = new Map(storeColumns.map((column) => [column.id, column]));
+
     this.taskPaths.clear();
+    this.taskMetadata.clear();
+    this.conflictDisplayTasks.clear();
     this.longTermObjectPaths.clear();
-    this.workspaceState = createGuidedSampleWorkspace();
+    const records: Array<{
+      task: TaskItem;
+      location: TaskLocation;
+      columnId?: string;
+      sortKey: number;
+      objectId?: string;
+    }> = [];
+    for (const [originalId, entries] of groups) {
+      const conflictPaths = this.duplicateTaskPaths.get(originalId);
+      if (entries.length !== 1 && !conflictPaths) continue;
+      for (const entry of entries) {
+        const parsed = entry.task;
+        if (!parsed) continue;
+        const placement = getTaskLocationFromPath(rootFolder, entry.file.path);
+        if (!placement) continue;
+        const id = conflictPaths
+          ? `conflict-display:${originalId}:${entry.file.path}`
+          : originalId;
+        const objectId = parsed.objectId ?? (parsed.object ? objectIdByTitle.get(parsed.object) : undefined);
+        const sortKey = parsed.sortKey || entry.file.stat.ctime;
+        const task: TaskItem = {
+          id,
+          title: entry.file.basename,
+          detail: parsed.detail,
+          source: parsed.linkedNotePath ? "笔记" : parsed.source,
+          meta: conflictPaths
+            ? this.t("ID 冲突 · 只读")
+            : parsed.linkedNotePath ? this.t("双链笔记") : this.t("Markdown 待办"),
+          priority: parsed.priority,
+          object: objectId ? objectTitleById.get(objectId) : parsed.object,
+          linkedNotePath: parsed.linkedNotePath,
+          done: parsed.done,
+          readOnlyConflict: Boolean(conflictPaths),
+          conflictOriginalId: conflictPaths ? originalId : undefined,
+          conflictPath: conflictPaths ? entry.file.path : undefined,
+        };
+        const columnId = placement.location === "storage" && placement.poolTitle
+          ? `${storageRoot}/${placement.poolTitle}`
+          : undefined;
+        records.push({ task, location: placement.location, columnId, sortKey, objectId });
+        this.taskPaths.set(id, entry.file.path);
+        this.taskMetadata.set(id, { sortKey, objectId });
+        if (conflictPaths) {
+          this.conflictDisplayTasks.set(id, {
+            originalId,
+            path: entry.file.path,
+            paths: conflictPaths,
+          });
+        }
+      }
+    }
+    records.sort((left, right) => compareFileSourceOrder(
+      { sortKey: left.sortKey, title: left.task.title },
+      { sortKey: right.sortKey, title: right.task.title },
+    ));
+
+    const whiteboardPathToTaskId = new Map<string, string>();
+    for (const record of records) {
+      if (record.location !== "canvas") continue;
+      const path = this.taskPaths.get(record.task.id);
+      if (path) whiteboardPathToTaskId.set(path, record.task.id);
+    }
+    const canvasPath = `${rootFolder}/白板/${NATIVE_CANVAS_FILE_NAME}`;
+    const canvasLayout = await this.readCanvasLayoutFromFile(canvasPath, whiteboardPathToTaskId);
+    const state: WorkspaceState = {
+      canvasCards: [],
+      canvasConnections: canvasLayout.connections,
+      canvasTextNotes: canvasLayout.textNotes,
+      longTermObjects: [],
+      inbox: [],
+      todo: [],
+      cache: [],
+      storeColumns,
+      transparentUi: this.settings.transparentUi,
+    };
+    let canvasIndex = 0;
+    for (const record of records) {
+      if (record.location === "canvas") {
+        const layout = resolveCanvasTaskLayout(
+          record.task.id,
+          canvasIndex,
+          canvasLayout.cards,
+        );
+        canvasIndex += 1;
+        state.canvasCards.push({ ...record.task, ...layout, tone: layout.tone as "sage" | "cream" | "lavender" | "blue" });
+      } else if (record.location === "inbox") {
+        state.inbox.push(record.task);
+      } else if (record.location === "todo") {
+        state.todo.push(record.task);
+      } else if (record.location === "cache") {
+        state.cache.push(record.task);
+      } else if (record.columnId) {
+        columnByPath.get(record.columnId)?.tasks.push(record.task);
+      }
+    }
+    const relatedTaskIds = new Map<string, string[]>();
+    for (const record of records) {
+      if (!record.objectId) continue;
+      relatedTaskIds.set(record.objectId, [
+        ...(relatedTaskIds.get(record.objectId) ?? []),
+        record.task.id,
+      ]);
+    }
+    state.longTermObjects = [...uniqueObjects.entries()].map(([id, entry]) => {
+      this.longTermObjectPaths.set(id, entry.file.path);
+      return {
+        ...(entry.object as LongTermObject),
+        relatedTaskIds: relatedTaskIds.get(id) ?? [],
+      };
+    });
+    this.workspaceState = state;
+    this.diagnostics = {
+      taskCount: records.length,
+      objectCount: state.longTermObjects.length,
+      poolCount: state.storeColumns.length,
+      shadowCopyCount,
+      duplicateTaskIds: [...this.duplicateTaskPaths.entries()].map(([id, paths]) => ({ id, paths })),
+    };
+    if (emit) this.emitWorkspace();
   }
 
-  private isManagedMarkdownNote(file: TFile): boolean {
-    const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    return (
-      Boolean(folder) &&
-      file.extension === "md" &&
-      file.path.startsWith(`${folder}/`) &&
-      !this.isArchivedMarkdownPath(file.path) &&
-      !this.isNativeWhiteboardPath(file.path)
+  private async migrateLegacyWorkspace(
+    legacyWorkspace: WorkspaceState | null,
+  ): Promise<void> {
+    const rootFolder = normalizeTaskFolder(this.settings.taskNotesFolder);
+    let sourceWorkspace = legacyWorkspace;
+    const existingGroups = await this.scanActiveTaskGroups(rootFolder);
+    const existingObjects = await this.scanLongTermObjects(rootFolder);
+    if (!sourceWorkspace && existingGroups.size === 0 && existingObjects.length === 0) {
+      sourceWorkspace = createGuidedSampleWorkspace();
+    }
+    if (sourceWorkspace) {
+      const objectIdByTitle = new Map(
+        (sourceWorkspace.longTermObjects ?? []).map((object) => [object.title, object.id]),
+      );
+      for (const [index, column] of sourceWorkspace.storeColumns.entries()) {
+        const poolFolder = `${rootFolder}/任务存储器/${taskFileStem(column.title)}`;
+        await this.ensureFolder(poolFolder);
+        const metadataPath = `${poolFolder}/${POOL_METADATA_FILE_NAME}`;
+        if (!this.app.vault.getAbstractFileByPath(metadataPath)) {
+          await this.app.vault.create(metadataPath, serializeTaskPoolMetadata({
+            hint: column.hint,
+            tone: column.tone,
+            sortKey: index * 1000,
+          }));
+        }
+      }
+      const records = getTaskRecords(sourceWorkspace);
+      for (const [index, record] of records.entries()) {
+        if (existingGroups.has(record.task.id)) continue;
+        const folder = getTaskFolder(rootFolder, record, sourceWorkspace);
+        await this.ensureFolder(folder);
+        const path = chooseStableMarkdownPath(
+          folder,
+          record.task.title,
+          undefined,
+          (candidate) => Boolean(this.app.vault.getAbstractFileByPath(candidate)),
+          this.t("未命名待办"),
+        );
+        await this.app.vault.create(path, serializeTaskNote(record.task, {
+          sortKey: index * 1000,
+          objectId: record.task.object ? objectIdByTitle.get(record.task.object) : undefined,
+        }));
+      }
+      const currentObjectIds = new Set(existingObjects.flatMap((entry) =>
+        entry.object ? [entry.object.id] : []
+      ));
+      for (const [index, object] of (sourceWorkspace.longTermObjects ?? []).entries()) {
+        if (currentObjectIds.has(object.id)) continue;
+        const folder = `${rootFolder}/长期对象`;
+        const path = chooseStableMarkdownPath(
+          folder,
+          object.title,
+          undefined,
+          (candidate) => Boolean(this.app.vault.getAbstractFileByPath(candidate)),
+          this.t("未命名长期对象"),
+        );
+        await this.app.vault.create(path, serializeLongTermObjectNote(object, index * 1000));
+      }
+    }
+
+    const storageRoot = `${rootFolder}/任务存储器`;
+    const poolFolders = this.app.vault.getAllLoadedFiles().filter(
+      (file): file is TFolder =>
+        file instanceof TFolder && file.parent?.path === storageRoot,
     );
+    for (const [index, poolFolder] of poolFolders.entries()) {
+      const metadataPath = `${poolFolder.path}/${POOL_METADATA_FILE_NAME}`;
+      if (!this.app.vault.getAbstractFileByPath(metadataPath)) {
+        await this.app.vault.create(metadataPath, serializeTaskPoolMetadata({
+          hint: this.t("从 Markdown 任务池同步"),
+          tone: TASK_POOL_TONES[index % TASK_POOL_TONES.length],
+          sortKey: index * 1000,
+        }));
+      }
+    }
+
+    await this.refreshFileIndex(false);
+    const legacyOrder = new Map<string, number>();
+    const legacyObjectIdByTitle = new Map<string, string>();
+    if (sourceWorkspace) {
+      getTaskRecords(sourceWorkspace).forEach((record, index) => legacyOrder.set(record.task.id, index * 1000));
+      (sourceWorkspace.longTermObjects ?? []).forEach((object) => legacyObjectIdByTitle.set(object.title, object.id));
+    }
+    for (const [id, path] of this.taskPaths) {
+      if (this.duplicateTaskPaths.has(id) || this.conflictDisplayTasks.has(id)) continue;
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) continue;
+      const content = await this.app.vault.read(file);
+      const parsed = parseTaskNote(content, file.basename, file.path);
+      if (!parsed) continue;
+      const objectId = parsed.objectId ?? (parsed.object ? legacyObjectIdByTitle.get(parsed.object) : undefined);
+      const task: TaskItem = {
+        id,
+        title: file.basename,
+        detail: parsed.detail,
+        source: parsed.linkedNotePath ? "笔记" : parsed.source,
+        priority: parsed.priority,
+        object: parsed.object,
+        linkedNotePath: parsed.linkedNotePath,
+        done: parsed.done,
+      };
+      const next = serializeTaskNote(task, {
+        sortKey: parsed.sortKey || legacyOrder.get(id) || file.stat.ctime,
+        objectId,
+      });
+      if (next !== content) await this.app.vault.modify(file, next);
+    }
+    const archivePrefix = `${rootFolder}/归档/`;
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!file.path.startsWith(archivePrefix)) continue;
+      const content = await this.app.vault.read(file);
+      const parsed = parseTaskNote(content, file.basename, file.path);
+      if (!parsed) continue;
+      const task: TaskItem = {
+        id: parsed.id,
+        title: file.basename,
+        detail: parsed.detail,
+        source: parsed.linkedNotePath ? "笔记" : parsed.source,
+        priority: parsed.priority,
+        object: parsed.object,
+        linkedNotePath: parsed.linkedNotePath,
+        done: parsed.done,
+      };
+      const next = serializeTaskNote(task, {
+        sortKey: parsed.sortKey || file.stat.ctime,
+        objectId: parsed.objectId ?? (
+          parsed.object ? legacyObjectIdByTitle.get(parsed.object) : undefined
+        ),
+      });
+      if (next !== content) await this.app.vault.modify(file, next);
+    }
+    for (const entry of await this.scanLongTermObjects(rootFolder)) {
+      if (!entry.object) continue;
+      const next = serializeLongTermObjectNote(
+        entry.object,
+        entry.sortKey || entry.file.stat.ctime,
+      );
+      if (next !== entry.content) await this.app.vault.modify(entry.file, next);
+    }
+    await this.refreshFileIndex(false);
+    const canvasPath = `${rootFolder}/白板/${NATIVE_CANVAS_FILE_NAME}`;
+    if (!this.app.vault.getAbstractFileByPath(canvasPath) && sourceWorkspace) {
+      const oldCards = new Map(sourceWorkspace.canvasCards.map((card) => [card.id, card]));
+      if (this.workspaceState) {
+        this.workspaceState.canvasCards = this.workspaceState.canvasCards.map((card) => {
+          const old = oldCards.get(card.id);
+          return old ? { ...card, x: old.x, y: old.y, tone: old.tone } : card;
+        });
+        this.workspaceState.canvasConnections = sourceWorkspace.canvasConnections ?? [];
+        this.workspaceState.canvasTextNotes = sourceWorkspace.canvasTextNotes ?? [];
+        await this.syncNativeCanvas();
+      }
+    }
+    this.settings.fileSchemaVersion = FILE_SCHEMA_VERSION;
+  }
+
+  private assertTaskIsWritable(taskId: string): void {
+    const displayConflict = this.conflictDisplayTasks.get(taskId);
+    if (displayConflict) {
+      throw new Error(`${this.t("任务 ID 冲突，已停止管理：")} ${displayConflict.paths.join(" · ")}`);
+    }
+    const paths = this.duplicateTaskPaths.get(taskId);
+    if (paths) {
+      throw new Error(`${this.t("任务 ID 冲突，已停止管理：")} ${paths.join(" · ")}`);
+    }
+  }
+
+  private targetFolder(target: NoteTaskTarget): string {
+    const rootFolder = normalizeTaskFolder(this.settings.taskNotesFolder);
+    if (target.location === "canvas") return `${rootFolder}/白板`;
+    if (target.location === "inbox") return `${rootFolder}/缓存工作台/收集箱`;
+    if (target.location === "todo") return `${rootFolder}/缓存工作台/待办列表`;
+    if (target.location === "cache") return `${rootFolder}/缓存工作台/缓存列表`;
+    const storageRoot = `${rootFolder}/任务存储器`;
+    if (!target.columnId?.startsWith(`${storageRoot}/`)) {
+      throw new Error(this.t("目标任务池不可用"));
+    }
+    return target.columnId;
+  }
+
+  private createFileTask(task: TaskItem, target: NoteTaskTarget): Promise<void> {
+    return this.enqueueMarkdownMutation(async () => {
+      await this.refreshFileIndex(false);
+      this.assertTaskIsWritable(task.id);
+      if (this.taskPaths.has(task.id)) {
+        throw new Error(this.t("任务 ID 已经存在"));
+      }
+      const folder = this.targetFolder(target);
+      await this.ensureFolder(folder);
+      const path = chooseStableMarkdownPath(
+        folder,
+        task.title,
+        undefined,
+        (candidate) => Boolean(this.app.vault.getAbstractFileByPath(candidate)),
+        this.t("未命名待办"),
+      );
+      await this.app.vault.create(path, serializeTaskNote(task, {
+        sortKey: Date.now(),
+        objectId: target.objectId,
+      }));
+      await this.refreshFileIndex();
+      if (target.location === "canvas") await this.syncNativeCanvasAfterTaskCommit();
+    });
+  }
+
+  private updateFileTask(task: TaskItem): Promise<void> {
+    return this.enqueueMarkdownMutation(async () => {
+      await this.refreshFileIndex(false);
+      this.assertTaskIsWritable(task.id);
+      const oldPath = this.taskPaths.get(task.id);
+      if (!oldPath) throw new Error(this.t("找不到任务 Markdown 文件"));
+      const abstractFile = this.app.vault.getAbstractFileByPath(oldPath);
+      if (!(abstractFile instanceof TFile)) throw new Error(this.t("任务 Markdown 文件不可用"));
+      let file: TFile = abstractFile;
+      const metadata = this.taskMetadata.get(task.id) ?? { sortKey: file.stat.ctime };
+      const folder = file.parent?.path ?? "";
+      const targetPath = chooseStableMarkdownPath(
+        folder,
+        task.title,
+        file.path,
+        (candidate) => Boolean(this.app.vault.getAbstractFileByPath(candidate)),
+        this.t("未命名待办"),
+      );
+      if (targetPath !== file.path) {
+        await this.app.vault.rename(file, targetPath);
+        const moved = this.app.vault.getAbstractFileByPath(targetPath);
+        if (moved instanceof TFile) file = moved;
+      }
+      await this.app.vault.modify(file, serializeTaskNote(task, metadata));
+      await this.refreshFileIndex();
+      if (file.path.startsWith(`${normalizeTaskFolder(this.settings.taskNotesFolder)}/白板/`)) {
+        await this.syncNativeCanvasAfterTaskCommit();
+      }
+    });
+  }
+
+  private createFilePool(column: WorkspaceState["storeColumns"][number]): Promise<void> {
+    return this.enqueueMarkdownMutation(async () => {
+      const rootFolder = normalizeTaskFolder(this.settings.taskNotesFolder);
+      const folder = `${rootFolder}/任务存储器/${taskFileStem(column.title)}`;
+      if (this.app.vault.getAbstractFileByPath(folder)) {
+        throw new Error(this.t("同名任务池已经存在"));
+      }
+      await this.ensureFolder(folder);
+      await this.app.vault.create(`${folder}/${POOL_METADATA_FILE_NAME}`, serializeTaskPoolMetadata({
+        hint: column.hint,
+        tone: column.tone,
+        sortKey: Date.now(),
+      }));
+      await this.refreshFileIndex();
+    });
+  }
+
+  private createFileLongTermObject(object: LongTermObject): Promise<void> {
+    return this.enqueueMarkdownMutation(async () => {
+      const folder = `${normalizeTaskFolder(this.settings.taskNotesFolder)}/长期对象`;
+      const path = chooseStableMarkdownPath(
+        folder,
+        object.title,
+        undefined,
+        (candidate) => Boolean(this.app.vault.getAbstractFileByPath(candidate)),
+        this.t("未命名长期对象"),
+      );
+      await this.app.vault.create(path, serializeLongTermObjectNote(object, Date.now()));
+      await this.refreshFileIndex();
+    });
+  }
+
+  private updateFileCanvasLayout(
+    layout: Pick<WorkspaceState, "canvasCards" | "canvasConnections" | "canvasTextNotes">,
+  ): Promise<void> {
+    return this.enqueueMarkdownMutation(async () => {
+      if (!this.workspaceState) return;
+      const cards = new Map(layout.canvasCards.map((card) => [card.id, card]));
+      this.workspaceState.canvasCards = this.workspaceState.canvasCards.map((card) => {
+        const next = cards.get(card.id);
+        return next ? { ...card, x: next.x, y: next.y, tone: next.tone } : card;
+      });
+      const validIds = new Set(this.workspaceState.canvasCards.map((card) => card.id));
+      this.workspaceState.canvasConnections = (layout.canvasConnections ?? []).filter(
+        (connection) => validIds.has(connection.fromId) && validIds.has(connection.toId),
+      );
+      this.workspaceState.canvasTextNotes = clone(layout.canvasTextNotes ?? []);
+      await this.syncNativeCanvas();
+    });
+  }
+
+  private async setTransparentUi(value: boolean): Promise<void> {
+    this.settings.transparentUi = value;
+    if (this.workspaceState) this.workspaceState.transparentUi = value;
+    await this.persistWorkspace();
+  }
+
+  private moveFileTaskById(taskId: string, target: NoteTaskTarget): Promise<boolean> {
+    return this.enqueueMarkdownMutation(async () => {
+      await this.refreshFileIndex(false);
+      this.assertTaskIsWritable(taskId);
+      const path = this.taskPaths.get(taskId);
+      if (!path) return false;
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) return false;
+      const wasCanvas = path.startsWith(`${normalizeTaskFolder(this.settings.taskNotesFolder)}/白板/`);
+      const folder = this.targetFolder(target);
+      await this.ensureFolder(folder);
+      const targetPath = `${folder}/${file.name}`;
+      const occupied = this.app.vault.getAbstractFileByPath(targetPath);
+      if (occupied && targetPath !== file.path) {
+        throw new Error(this.t("目标位置已经存在同名文件"));
+      }
+      if (targetPath !== file.path) await this.app.vault.rename(file, targetPath);
+      const moved = this.app.vault.getAbstractFileByPath(targetPath);
+      if (moved instanceof TFile) {
+        const content = await this.app.vault.read(moved);
+        const parsed = parseTaskNote(content, moved.basename, moved.path);
+        const current = this.workspaceState
+          ? getTaskRecords(this.workspaceState).find((record) => record.task.id === taskId)?.task
+          : undefined;
+        if (parsed && current) {
+          await this.app.vault.modify(moved, serializeTaskNote(current, {
+            sortKey: Date.now(),
+            objectId: this.taskMetadata.get(taskId)?.objectId,
+          }));
+        }
+      }
+      await this.refreshFileIndex();
+      if (wasCanvas || target.location === "canvas") {
+        await this.syncNativeCanvasAfterTaskCommit();
+      }
+      return true;
+    });
+  }
+
+  private async moveFileTaskNote(path: string, target: NoteTaskTarget): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) throw new Error(this.t("笔记文件不可用"));
+    const content = await this.app.vault.read(file);
+    const parsed = parseTaskNote(content, file.basename, file.path);
+    if (parsed) {
+      await this.moveFileTaskById(parsed.id, target);
+      return;
+    }
+    const taskId = createManagedTaskId();
+    await this.enqueueMarkdownMutation(async () => {
+      const task: TaskItem = {
+        id: taskId,
+        title: file.basename,
+        detail: content.trim(),
+        source: "文本",
+        priority: "P3",
+      };
+      await this.app.vault.modify(file, serializeTaskNote(task, { sortKey: Date.now(), objectId: target.objectId }));
+      await this.refreshFileIndex(false);
+    });
+    await this.moveFileTaskById(taskId, target);
+  }
+
+  private archiveFileTask(taskId: string): Promise<void> {
+    return this.enqueueMarkdownMutation(async () => {
+      await this.refreshFileIndex(false);
+      this.assertTaskIsWritable(taskId);
+      const path = this.taskPaths.get(taskId);
+      if (!path) return;
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) return;
+      const wasCanvas = path.startsWith(`${normalizeTaskFolder(this.settings.taskNotesFolder)}/白板/`);
+      const folder = `${normalizeTaskFolder(this.settings.taskNotesFolder)}/归档/${archiveDateFolder()}`;
+      await this.ensureFolder(folder);
+      const targetPath = chooseStableMarkdownPath(
+        folder,
+        file.basename,
+        undefined,
+        (candidate) => Boolean(this.app.vault.getAbstractFileByPath(candidate)),
+        this.t("未命名待办"),
+      );
+      await this.app.vault.rename(file, targetPath);
+      await this.refreshFileIndex();
+      if (wasCanvas) await this.syncNativeCanvasAfterTaskCommit();
+    });
+  }
+
+  private deleteFileTask(taskId: string): Promise<void> {
+    return this.enqueueMarkdownMutation(async () => {
+      await this.refreshFileIndex(false);
+      this.assertTaskIsWritable(taskId);
+      const path = this.taskPaths.get(taskId);
+      if (!path) return;
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) return;
+      const wasCanvas = path.startsWith(`${normalizeTaskFolder(this.settings.taskNotesFolder)}/白板/`);
+      await this.app.fileManager.trashFile(file);
+      await this.refreshFileIndex();
+      if (wasCanvas) await this.syncNativeCanvasAfterTaskCommit();
+    });
+  }
+
+  private async loadCanvasLayoutOnly(path: string): Promise<void> {
+    if (!this.workspaceState) return;
+    const whiteboardPaths = new Map<string, string>();
+    for (const card of this.workspaceState.canvasCards) {
+      const taskPath = this.taskPaths.get(card.id);
+      if (taskPath) whiteboardPaths.set(taskPath, card.id);
+    }
+    const layout = await this.readCanvasLayoutFromFile(path, whiteboardPaths);
+    this.workspaceState.canvasCards = this.workspaceState.canvasCards.map((card) => {
+      const next = layout.cards.get(card.id);
+      return next ? { ...card, ...next, tone: next.tone as "sage" | "cream" | "lavender" | "blue" } : card;
+    });
+    this.workspaceState.canvasConnections = layout.connections;
+    this.workspaceState.canvasTextNotes = layout.textNotes;
+    await this.syncNativeCanvas();
+    this.emitWorkspace();
   }
 
   private isArchivedMarkdownPath(path: string): boolean {
@@ -1635,24 +1933,11 @@ export default class FourLayerTodoPlugin extends Plugin {
   }
 
   private async openTaskNote(taskId: string): Promise<void> {
-    await this.workspaceSaveQueue.catch(() => undefined);
     let path = this.taskPaths.get(taskId);
 
     if (!path) {
-      await this.refreshMarkdownPaths();
+      await this.refreshFileIndex(false);
       path = this.taskPaths.get(taskId);
-    }
-
-    if (!path && this.settings.markdownSyncEnabled) {
-      await this.syncWorkspaceToMarkdown();
-      path = this.taskPaths.get(taskId);
-    }
-
-    if (!path) {
-      const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-      if (folder) {
-        path = (await this.findMarkdownTaskFileAnywhere(folder, taskId))?.path;
-      }
     }
 
     if (!path) {
@@ -1660,6 +1945,15 @@ export default class FourLayerTodoPlugin extends Plugin {
     }
 
     await this.openNote(path);
+  }
+
+  private async syncNativeCanvasAfterTaskCommit(): Promise<void> {
+    try {
+      await this.syncNativeCanvas();
+    } catch (error) {
+      console.error("四层待办: task saved but Canvas update failed", error);
+      new Notice(this.t("任务位置已经保存，但 Canvas 布局更新失败；任务不会移回。"));
+    }
   }
 
   private async syncNativeCanvas(): Promise<void> {
@@ -1679,36 +1973,21 @@ export default class FourLayerTodoPlugin extends Plugin {
 
     for (const card of this.workspaceState.canvasCards) {
       const taskPath = this.taskPaths.get(card.id);
-      if (this.settings.markdownSyncEnabled && !taskPath) {
+      if (!taskPath) {
         throw new Error(
           this.t("白板卡片“{title}”缺少 Markdown 文件", { title: card.title }),
         );
       }
-      nodes.push(
-        taskPath
-          ? {
-              id: card.id,
-              type: "file",
-              file: taskPath,
-              x: card.x,
-              y: card.y,
-              width: 250,
-              height: 142,
-              color: nativeCanvasColor(card.tone),
-            }
-          : {
-              id: card.id,
-              type: "text",
-              text: `${NATIVE_CANVAS_TASK_MARKER}\n**${card.title}**${
-                card.detail ? `\n\n${card.detail}` : ""
-              }`,
-              x: card.x,
-              y: card.y,
-              width: 250,
-              height: 142,
-              color: nativeCanvasColor(card.tone),
-            },
-      );
+      nodes.push({
+        id: card.id,
+        type: "file",
+        file: taskPath,
+        x: card.x,
+        y: card.y,
+        width: 250,
+        height: 142,
+        color: nativeCanvasColor(card.tone),
+      });
       nodeIds.add(card.id);
     }
 
@@ -1743,8 +2022,9 @@ export default class FourLayerTodoPlugin extends Plugin {
     const path = `${nativeCanvasFolder}/${NATIVE_CANVAS_FILE_NAME}`;
     const existing = this.app.vault.getAbstractFileByPath(path);
 
-    this.pendingNativeCanvasWrites.set(path, content);
     if (existing instanceof TFile) {
+      const current = await this.app.vault.read(existing);
+      if (current === content) return;
       await this.app.vault.modify(existing, content);
     } else {
       await this.app.vault.create(path, content);
@@ -1769,29 +2049,6 @@ export default class FourLayerTodoPlugin extends Plugin {
     await this.app.workspace.getLeaf("tab").openFile(file);
   }
 
-  private isTaskNativeCanvas(path: string): boolean {
-    const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    return path === `${folder}/白板/${NATIVE_CANVAS_FILE_NAME}`;
-  }
-
-  private async loadDefaultNativeCanvas(): Promise<void> {
-    const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    const path = `${folder}/白板/${NATIVE_CANVAS_FILE_NAME}`;
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof TFile) {
-      await this.loadNativeCanvas(path, false);
-    }
-  }
-
-  private async importNativeCanvas(file: TFile): Promise<void> {
-    const content = await this.app.vault.read(file);
-    const pendingContent = this.pendingNativeCanvasWrites.get(file.path);
-    if (pendingContent !== undefined) {
-      this.pendingNativeCanvasWrites.delete(file.path);
-      if (pendingContent === content) return;
-    }
-    await this.loadNativeCanvas(file.path);
-  }
 
   private listNativeCanvases(): Promise<NativeCanvasFile[]> {
     const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
@@ -1810,875 +2067,6 @@ export default class FourLayerTodoPlugin extends Plugin {
     );
   }
 
-  private async loadNativeCanvas(
-    path: string,
-    fromExternalEdit = true,
-  ): Promise<void> {
-    const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    const whiteboardFolder = `${folder}/白板/`;
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (
-      !folder ||
-      !path.startsWith(whiteboardFolder) ||
-      !(file instanceof TFile) ||
-      file.extension !== "canvas" ||
-      !this.workspaceState
-    ) {
-      throw new Error(this.t("Canvas 文件不可用"));
-    }
-
-    const raw = JSON.parse(await this.app.vault.read(file)) as {
-      nodes?: unknown;
-      edges?: unknown;
-    };
-    if (!Array.isArray(raw.nodes)) {
-      throw new Error(this.t("Canvas 文件格式无效"));
-    }
-
-    const cards: WorkspaceState["canvasCards"] = [];
-    const textNotes: NonNullable<WorkspaceState["canvasTextNotes"]> = [];
-    const cardIds = new Set<string>();
-    const canvasNodeToTaskId = new Map<string, string>();
-
-    for (const rawNode of raw.nodes) {
-      if (!rawNode || typeof rawNode !== "object") continue;
-      const node = rawNode as Record<string, unknown>;
-      const id = getString(node.id);
-      const type = getString(node.type);
-      if (!id || (type !== "file" && type !== "text")) continue;
-
-      const x = getNumber(node.x) ?? 160;
-      const y = getNumber(node.y) ?? 140;
-      const color = getString(node.color);
-      const tone =
-        color === "4"
-          ? "sage"
-          : color === "6"
-            ? "lavender"
-            : color === "5"
-              ? "blue"
-              : "cream";
-
-      if (type === "file") {
-        const notePath = getString(node.file);
-        const noteFile = notePath
-          ? this.app.vault.getAbstractFileByPath(notePath)
-          : null;
-        if (!(noteFile instanceof TFile)) continue;
-
-        const content = await this.app.vault.read(noteFile);
-        const parsedTask = parseTaskNote(content, noteFile.basename, noteFile.path);
-        if (parsedTask) {
-          const taskId = parsedTask.id;
-          canvasNodeToTaskId.set(id, taskId);
-          if (cardIds.has(taskId)) continue;
-          cards.push({
-            id: taskId,
-            title: parsedTask.title,
-            detail: parsedTask.detail,
-            source: parsedTask.source,
-            meta: parsedTask.meta,
-            priority: parsedTask.priority,
-            object: parsedTask.object,
-            done: parsedTask.done,
-            linkedNotePath: parsedTask.linkedNotePath,
-            x,
-            y,
-            tone,
-          });
-          cardIds.add(taskId);
-          this.taskPaths.set(taskId, noteFile.path);
-          continue;
-        }
-
-        // Keep legacy external-note file nodes working when Markdown sync is
-        // disabled. With sync enabled, every task node points to its managed
-        // task file and uses the stable task ID above.
-        cards.push({
-          id,
-          title: noteFile.basename,
-          detail: "",
-          source: "笔记",
-          meta: tr("Canvas 笔记"),
-          linkedNotePath: noteFile.path,
-          x,
-          y,
-          tone,
-        });
-        cardIds.add(id);
-        canvasNodeToTaskId.set(id, id);
-        continue;
-      }
-
-      const text = getString(node.text) ?? "";
-      if (text.startsWith(NATIVE_CANVAS_TASK_MARKER)) {
-        const taskText = text
-          .slice(NATIVE_CANVAS_TASK_MARKER.length)
-          .trimStart();
-        const heading = taskText.match(/^\*\*(.+?)\*\*(?:\r?\n\r?\n)?/);
-        const title = heading?.[1].trim() || tr("未命名待办");
-        const detail = heading
-          ? taskText.slice(heading[0].length).trim()
-          : taskText;
-        cards.push({
-          id,
-          title,
-          detail,
-          source: "文本",
-          meta: tr("Canvas 待办"),
-          x,
-          y,
-          tone,
-        });
-        cardIds.add(id);
-        canvasNodeToTaskId.set(id, id);
-      } else {
-        textNotes.push({ id, content: text, x, y });
-      }
-    }
-
-    const connections = Array.isArray(raw.edges)
-      ? raw.edges.flatMap((rawEdge) => {
-          if (!rawEdge || typeof rawEdge !== "object") return [];
-          const edge = rawEdge as Record<string, unknown>;
-          const id = getString(edge.id);
-          const fromId = canvasNodeToTaskId.get(getString(edge.fromNode) ?? "");
-          const toId = canvasNodeToTaskId.get(getString(edge.toNode) ?? "");
-          return id &&
-            fromId &&
-            toId &&
-            cardIds.has(fromId) &&
-            cardIds.has(toId)
-            ? [{ id, fromId, toId }]
-            : [];
-        })
-      : [];
-
-    const stateWithoutCanvasCards = cards.reduce(
-      (state, card) => this.removeTask(state, card.id),
-      this.workspaceState,
-    );
-    this.workspaceState = {
-      ...stateWithoutCanvasCards,
-      canvasCards: cards,
-      canvasTextNotes: textNotes,
-      canvasConnections: connections,
-    };
-    if (fromExternalEdit) {
-      this.skipNextNativeCanvasSync = true;
-      if (this.settings.markdownSyncEnabled) {
-        // A managed note dropped onto the native Canvas becomes a whiteboard
-        // card. Move its card file to the whiteboard folder without rewriting
-        // the Canvas that the user just edited.
-        await this.syncWorkspaceToMarkdown();
-      }
-    }
-    await this.persistWorkspace();
-    this.emitWorkspace();
-  }
-
-  private async indexMarkdownTasks(folder: string): Promise<Map<string, IndexedMarkdownTask>> {
-    const notes = new Map<string, IndexedMarkdownTask>();
-    const expectedFolders = new Map<string, string>();
-    if (this.workspaceState) {
-      for (const record of getTaskRecords(this.workspaceState)) {
-        expectedFolders.set(
-          record.task.id,
-          getTaskFolder(folder, record, this.workspaceState),
-        );
-      }
-    }
-    const files = this.app.vault
-      .getMarkdownFiles()
-      .filter(
-        (file) =>
-          file.path.startsWith(`${folder}/`) &&
-          !this.isArchivedMarkdownPath(file.path) &&
-          !this.isNativeWhiteboardPath(file.path),
-      );
-
-    for (const file of files) {
-      const content = await this.app.vault.read(file);
-      const task = parseTaskNote(content, file.basename, file.path);
-      if (!task) continue;
-      const known = notes.get(task.id);
-      const trackedPath = this.taskPaths.get(task.id);
-      if (!known) {
-        notes.set(task.id, { file, content });
-        continue;
-      }
-
-      console.warn(
-        `四层待办: duplicate task id ${task.id}`,
-        known.file.path,
-        file.path,
-      );
-      const expectedFolder = expectedFolders.get(task.id);
-      const rank = (candidate: TFile): number => {
-        if (candidate.path === trackedPath) return 0;
-        if (expectedFolder && candidate.parent?.path === expectedFolder) return 1;
-        if (candidate.basename === taskFileStem(task.title)) return 2;
-        if (
-          isNumericConflictBasename(
-            candidate.basename,
-            task.title,
-            tr("未命名待办"),
-          )
-        ) {
-          return 3;
-        }
-        return 4;
-      };
-      const knownRank = rank(known.file);
-      const candidateRank = rank(file);
-      if (
-        candidateRank < knownRank ||
-        (candidateRank === knownRank && file.path < known.file.path)
-      ) {
-        notes.set(task.id, { file, content });
-      }
-    }
-    return notes;
-  }
-
-  private async findMarkdownTaskFileInFolder(
-    folder: string,
-    taskId: string,
-  ): Promise<TFile | null> {
-    const files = this.app.vault
-      .getMarkdownFiles()
-      .filter((file) => file.parent?.path === folder);
-
-    for (const file of files) {
-      const content = await this.app.vault.read(file);
-      if (parseTaskNote(content, file.basename, file.path)?.id === taskId) {
-        return file;
-      }
-    }
-    return null;
-  }
-
-  private async findMarkdownTaskFileAnywhere(
-    rootFolder: string,
-    taskId: string,
-  ): Promise<TFile | null> {
-    const files = this.app.vault
-      .getMarkdownFiles()
-      .filter(
-        (file) =>
-          file.path.startsWith(`${rootFolder}/`) &&
-          !this.isArchivedMarkdownPath(file.path),
-      );
-
-    for (const file of files) {
-      const content = await this.app.vault.read(file);
-      if (parseTaskNote(content, file.basename, file.path)?.id === taskId) return file;
-    }
-    return null;
-  }
-
-  private async indexMarkdownLongTermObjects(
-    folder: string,
-  ): Promise<Map<string, IndexedMarkdownLongTermObject>> {
-    const notes = new Map<string, IndexedMarkdownLongTermObject>();
-    const objectFolder = `${folder}/长期对象/`;
-    const files = this.app.vault
-      .getMarkdownFiles()
-      .filter((file) => file.path.startsWith(objectFolder));
-
-    for (const file of files) {
-      const content = await this.app.vault.read(file);
-      const object = parseLongTermObjectNote(content, file.basename);
-      if (!object) continue;
-      const known = notes.get(object.id);
-      if (!known) {
-        notes.set(object.id, { file, content });
-        continue;
-      }
-
-      console.warn(
-        `四层待办: duplicate long-term object id ${object.id}`,
-        known.file.path,
-        file.path,
-      );
-      const trackedPath = this.longTermObjectPaths.get(object.id);
-      const rank = (candidate: TFile): number => {
-        if (candidate.path === trackedPath) return 0;
-        if (candidate.basename === taskFileStem(object.title)) return 1;
-        if (
-          isNumericConflictBasename(
-            candidate.basename,
-            object.title,
-            tr("未命名长期对象"),
-          )
-        ) {
-          return 2;
-        }
-        return 3;
-      };
-      const knownRank = rank(known.file);
-      const candidateRank = rank(file);
-      if (
-        candidateRank < knownRank ||
-        (candidateRank === knownRank && file.path < known.file.path)
-      ) {
-        notes.set(object.id, { file, content });
-      }
-    }
-    return notes;
-  }
-
-  private async createMarkdownTaskFile(
-    folder: string,
-    title: string,
-    content: string,
-  ): Promise<TFile> {
-    const stem = taskFileStem(title);
-    let path = `${folder}/${stem}.md`;
-    let suffix = 2;
-
-    while (this.app.vault.getAbstractFileByPath(path)) {
-      path = `${folder}/${stem} ${suffix}.md`;
-      suffix += 1;
-    }
-
-    this.pendingMarkdownWrites.set(path, content);
-    return this.app.vault.create(path, content);
-  }
-
-  private async moveMarkdownTaskFile(
-    file: TFile,
-    folder: string,
-    title: string,
-    taskId?: string,
-  ): Promise<TFile> {
-    const oldPath = file.path;
-    if (taskId && file.parent?.path !== folder) {
-      const duplicate = await this.findMarkdownTaskFileInFolder(folder, taskId);
-      if (duplicate && duplicate.path !== oldPath) return duplicate;
-    }
-    const targetPath = this.getAvailableTaskPath(folder, title, oldPath);
-    if (oldPath === targetPath) return file;
-
-    const renameKey = renameOperationKey(oldPath, targetPath);
-    this.pendingMarkdownRenames.add(renameKey);
-    try {
-      await this.app.vault.rename(file, targetPath);
-    } catch (error) {
-      this.pendingMarkdownRenames.delete(renameKey);
-      throw error;
-    }
-    const pendingContent = this.pendingMarkdownWrites.get(oldPath);
-    if (pendingContent !== undefined) {
-      this.pendingMarkdownWrites.delete(oldPath);
-      this.pendingMarkdownWrites.set(targetPath, pendingContent);
-    }
-    const moved = this.app.vault.getAbstractFileByPath(targetPath);
-    return moved instanceof TFile ? moved : file;
-  }
-
-  private getAvailableTaskPath(
-    folder: string,
-    title: string,
-    currentPath?: string,
-  ): string {
-    return chooseStableMarkdownPath(
-      folder,
-      title,
-      currentPath,
-      (path) => Boolean(this.app.vault.getAbstractFileByPath(path)),
-      tr("未命名待办"),
-    );
-  }
-
-  private hasCanonicalMarkdownCollision(file: TFile, title: string): boolean {
-    const folder = file.parent?.path;
-    if (!folder) return false;
-    const canonicalPath = `${folder}/${taskFileStem(title)}.md`;
-    return canonicalPath !== file.path &&
-      Boolean(this.app.vault.getAbstractFileByPath(canonicalPath));
-  }
-
-  private async writeMarkdownTask(file: TFile, content: string): Promise<void> {
-    this.pendingMarkdownWrites.set(file.path, content);
-    await this.app.vault.modify(file, content);
-  }
-
-  private archiveMarkdownTask(taskId: string): Promise<void> {
-    return this.enqueueMarkdownMutation(() =>
-      this.archiveMarkdownTaskInternal(taskId),
-    );
-  }
-
-  private async archiveMarkdownTaskInternal(taskId: string): Promise<void> {
-    const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    if (!this.settings.markdownSyncEnabled || !folder) {
-      throw new Error(this.t("归档需要启用 Markdown 同步"));
-    }
-
-    let path = this.taskPaths.get(taskId);
-    if (!path) {
-      const notes = await this.indexMarkdownTasks(folder);
-      path = notes.get(taskId)?.file.path;
-    }
-    if (!path) return;
-
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) return;
-
-    const archiveFolder = `${folder}/归档/${archiveDateFolder()}`;
-    await this.ensureFolder(archiveFolder);
-    await this.moveMarkdownTaskFile(file, archiveFolder, file.basename);
-    this.taskPaths.delete(taskId);
-  }
-
-  private deleteMarkdownTask(taskId: string): Promise<void> {
-    return this.enqueueMarkdownMutation(() =>
-      this.deleteMarkdownTaskInternal(taskId),
-    );
-  }
-
-  private async deleteMarkdownTaskInternal(taskId: string): Promise<void> {
-    const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    if (!folder) return;
-
-    let path = this.taskPaths.get(taskId);
-    if (!path) {
-      const notes = await this.indexMarkdownTasks(folder);
-      path = notes.get(taskId)?.file.path;
-    }
-    if (!path) return;
-
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof TFile) {
-      this.pendingMarkdownWrites.delete(file.path);
-      await this.app.fileManager.trashFile(file);
-    }
-    this.taskPaths.delete(taskId);
-  }
-
-  private moveTaskNote(
-    path: string,
-    target: NoteTaskTarget,
-  ): Promise<void> {
-    return this.enqueueMarkdownMutation(() =>
-      this.moveTaskNoteInternal(path, target),
-    );
-  }
-
-  private moveTaskById(
-    taskId: string,
-    target: NoteTaskTarget,
-  ): Promise<boolean> {
-    return this.enqueueMarkdownMutation(async () => {
-      const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-      if (!folder) return false;
-      const path =
-        this.taskPaths.get(taskId) ??
-        (await this.findMarkdownTaskFileAnywhere(folder, taskId))?.path;
-      if (!path) return false;
-      await this.moveTaskNoteInternal(path, target);
-      return true;
-    });
-  }
-
-  private async moveTaskNoteInternal(
-    path: string,
-    target: NoteTaskTarget,
-  ): Promise<void> {
-    const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    const file = this.app.vault.getAbstractFileByPath(path);
-    const isWhiteboardMarkdown =
-      Boolean(folder) &&
-      file instanceof TFile &&
-      file.extension === "md" &&
-      path.startsWith(`${folder}/白板/`);
-    if (
-      !folder ||
-      !(file instanceof TFile) ||
-      (!this.isTaskFolderNotePath(path) && !isWhiteboardMarkdown)
-    ) {
-      return;
-    }
-    if (!this.workspaceState) return;
-
-    const sourceContent = await this.app.vault.read(file);
-    const existing = parseTaskNote(sourceContent, file.basename, file.path);
-    const targetObject = (this.workspaceState.longTermObjects ?? []).find(
-      (object) => object.id === target.objectId,
-    );
-    const body = sourceContent
-      .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
-      .trim();
-    const markdownTask: MarkdownTask = {
-      id: existing?.id ?? createManagedTaskId(),
-      location: target.location,
-      columnId: target.location === "storage" ? target.columnId : undefined,
-      title: existing?.title ?? file.basename,
-      detail: existing?.detail ?? body,
-      source: existing?.source ?? "笔记",
-      meta: existing?.meta ?? tr("已移动笔记"),
-      priority: existing?.priority,
-      object: targetObject?.title ?? existing?.object,
-      x: target.location === "canvas" ? existing?.x : undefined,
-      y: target.location === "canvas" ? existing?.y : undefined,
-      tone: target.location === "canvas" ? existing?.tone : undefined,
-      done: target.location === "canvas" ? existing?.done : undefined,
-      linkedNotePath: existing?.linkedNotePath,
-    };
-
-    this.workspaceState = this.upsertMarkdownTask(this.workspaceState, markdownTask);
-    if (targetObject) {
-      this.workspaceState = {
-        ...this.workspaceState,
-        longTermObjects: (this.workspaceState.longTermObjects ?? []).map(
-          (object) =>
-            object.id === targetObject.id
-              ? {
-                  ...object,
-                  activity: tr("最近关联：{title}", { title: markdownTask.title }),
-                  relatedTaskIds: [
-                    ...new Set([...object.relatedTaskIds, markdownTask.id]),
-                  ],
-                }
-              : object,
-        ),
-      };
-    }
-    const task = [
-      ...this.workspaceState.canvasCards,
-      ...this.workspaceState.inbox,
-      ...this.workspaceState.todo,
-      ...this.workspaceState.cache,
-      ...this.workspaceState.storeColumns.flatMap((column) => column.tasks),
-    ].find((item) => item.id === markdownTask.id);
-    const record = task
-      ? {
-          task,
-          location: markdownTask.location,
-          columnId: markdownTask.columnId,
-        }
-      : undefined;
-    if (!record) return;
-
-    await this.ensureTaskFolderStructure(folder);
-    const content = serializeTaskNote(record);
-    await this.writeMarkdownTask(file, content);
-    const targetFolder = getTaskFolder(folder, record, this.workspaceState);
-    await this.ensureFolder(targetFolder);
-    const moved = await this.moveMarkdownTaskFile(
-      file,
-      targetFolder,
-      markdownTask.title,
-      markdownTask.id,
-    );
-    this.taskPaths.set(markdownTask.id, moved.path);
-    if (target.location === "canvas" && this.workspaceState) {
-      this.workspaceState = {
-        ...this.workspaceState,
-        canvasCards: this.workspaceState.canvasCards.map((card) =>
-          card.id === markdownTask.id
-            ? { ...card, linkedNotePath: moved.path }
-            : card,
-        ),
-      };
-    }
-    await this.persistWorkspace();
-    this.emitWorkspace();
-  }
-
-  private async importMarkdownNote(
-    file: TFile,
-    titleOverride?: string,
-  ): Promise<void> {
-    if (!this.settings.markdownSyncEnabled || !this.isManagedMarkdownNote(file)) {
-      return;
-    }
-
-    const content = await this.app.vault.read(file);
-    const pendingContent = this.pendingMarkdownWrites.get(file.path);
-    if (pendingContent !== undefined) {
-      this.pendingMarkdownWrites.delete(file.path);
-      if (pendingContent === content) return;
-    }
-
-    const markdownObject = parseLongTermObjectNote(content, file.basename);
-    if (markdownObject && this.workspaceState) {
-      if (isLegacySampleId(markdownObject.id)) return;
-      this.longTermObjectPaths.set(markdownObject.id, file.path);
-      this.workspaceState = this.upsertMarkdownLongTermObject(
-        this.workspaceState,
-        markdownObject,
-      );
-      await this.persistWorkspace();
-      this.emitWorkspace();
-      return;
-    }
-
-    const markdownTask = parseTaskNote(content, file.basename, file.path);
-    if (!markdownTask || !this.workspaceState) return;
-    if (isLegacySampleId(markdownTask.id)) return;
-    if (titleOverride) markdownTask.title = titleOverride;
-
-    const folder = normalizeTaskFolder(this.settings.taskNotesFolder);
-    const placed = this.placeMarkdownTaskFromPath(
-      this.workspaceState,
-      markdownTask,
-      file.path,
-      folder,
-    );
-    this.taskPaths.set(markdownTask.id, file.path);
-    this.workspaceState = this.upsertMarkdownTask(placed.state, placed.task);
-    await this.persistWorkspace();
-    this.emitWorkspace();
-  }
-
-  private async removeDeletedMarkdownNote(file: TFile): Promise<void> {
-    const taskId = [...this.taskPaths.entries()].find(
-      ([, path]) => path === file.path,
-    )?.[0];
-    if (taskId && this.workspaceState) {
-      this.taskPaths.delete(taskId);
-      this.workspaceState = this.removeTask(this.workspaceState, taskId);
-      await this.persistWorkspace();
-      this.emitWorkspace();
-      return;
-    }
-
-    const objectId = [...this.longTermObjectPaths.entries()].find(
-      ([, path]) => path === file.path,
-    )?.[0];
-    if (!objectId || !this.workspaceState) return;
-
-    this.longTermObjectPaths.delete(objectId);
-    this.workspaceState = this.removeLongTermObject(this.workspaceState, objectId);
-    await this.persistWorkspace();
-    this.emitWorkspace();
-  }
-
-  private async updateRenamedMarkdownNote(
-    file: TFile,
-    oldPath: string,
-    eventNewPath: string,
-  ): Promise<void> {
-    const renameKey = renameOperationKey(oldPath, eventNewPath);
-    const isPluginRename = this.pendingMarkdownRenames.delete(renameKey);
-    if (isPluginRename) {
-      return;
-    }
-    // A later rename may mutate the same TFile object before this queued event
-    // runs. Ignore the stale event; the later event owns the final path.
-    if (file.path !== eventNewPath) return;
-
-    for (const [taskId, path] of this.taskPaths) {
-      if (path !== oldPath) continue;
-      const currentTask = this.workspaceState
-        ? getTaskRecords(this.workspaceState).find(
-            (record) => record.task.id === taskId,
-          )?.task
-        : undefined;
-      const preserveTitle = currentTask
-        ? this.hasCanonicalMarkdownCollision(file, currentTask.title) &&
-          isNumericConflictBasename(
-            file.basename,
-            currentTask.title,
-            tr("未命名待办"),
-          )
-        : false;
-      this.taskPaths.set(taskId, file.path);
-      if (this.isArchivedMarkdownPath(file.path)) {
-        this.taskPaths.delete(taskId);
-        return;
-      }
-      await this.importMarkdownNote(
-        file,
-        preserveTitle ? undefined : file.basename,
-      );
-      if (!preserveTitle && this.isManagedMarkdownNote(file)) {
-        await this.syncWorkspaceToMarkdown();
-      }
-      return;
-    }
-
-    for (const [objectId, path] of this.longTermObjectPaths) {
-      if (path !== oldPath) continue;
-      this.longTermObjectPaths.set(objectId, file.path);
-      if (!this.workspaceState) return;
-
-      const currentObject = (this.workspaceState.longTermObjects ?? []).find(
-        (object) => object.id === objectId,
-      );
-      if (
-        currentObject &&
-        this.hasCanonicalMarkdownCollision(file, currentObject.title) &&
-        isNumericConflictBasename(
-          file.basename,
-          currentObject.title,
-          tr("未命名长期对象"),
-        )
-      ) {
-        return;
-      }
-
-      this.workspaceState = this.renameLongTermObject(
-        this.workspaceState,
-        objectId,
-        file.basename,
-      );
-      await this.persistWorkspace();
-      await this.syncWorkspaceToMarkdown();
-      this.emitWorkspace();
-      return;
-    }
-
-    if (!this.isArchivedMarkdownPath(file.path)) {
-      await this.importMarkdownNote(file);
-    }
-  }
-
-  private renameLongTermObject(
-    state: WorkspaceState,
-    objectId: string,
-    title: string,
-  ): WorkspaceState {
-    const object = (state.longTermObjects ?? []).find((item) => item.id === objectId);
-    if (!object || object.title === title) return clone(state);
-
-    const renameTaskObject = <T extends TaskItem>(task: T): T =>
-      task.object === object.title ? { ...task, object: title } : task;
-
-    return {
-      ...clone(state),
-      longTermObjects: (state.longTermObjects ?? []).map((item) =>
-        item.id === objectId ? { ...item, title } : item,
-      ),
-      canvasCards: state.canvasCards.map(renameTaskObject),
-      inbox: state.inbox.map(renameTaskObject),
-      todo: state.todo.map(renameTaskObject),
-      cache: state.cache.map(renameTaskObject),
-      storeColumns: state.storeColumns.map((column) => ({
-        ...column,
-        tasks: column.tasks.map(renameTaskObject),
-      })),
-    };
-  }
-
-  private removeTask(state: WorkspaceState, taskId: string): WorkspaceState {
-    return {
-      ...clone(state),
-      canvasCards: state.canvasCards.filter((task) => task.id !== taskId),
-      canvasConnections: state.canvasConnections?.filter(
-        (connection) =>
-          connection.fromId !== taskId && connection.toId !== taskId,
-      ),
-      inbox: state.inbox.filter((task) => task.id !== taskId),
-      todo: state.todo.filter((task) => task.id !== taskId),
-      cache: state.cache.filter((task) => task.id !== taskId),
-      storeColumns: state.storeColumns.map((column) => ({
-        ...column,
-        tasks: column.tasks.filter((task) => task.id !== taskId),
-      })),
-    };
-  }
-
-  private removeLongTermObject(
-    state: WorkspaceState,
-    objectId: string,
-  ): WorkspaceState {
-    return {
-      ...clone(state),
-      longTermObjects: (state.longTermObjects ?? []).filter(
-        (object) => object.id !== objectId,
-      ),
-    };
-  }
-
-  private upsertMarkdownTask(
-    state: WorkspaceState,
-    markdownTask: MarkdownTask,
-  ): WorkspaceState {
-    const existing = getTaskRecords(state).find(
-      (record) => record.task.id === markdownTask.id,
-    )?.task;
-    const withoutTask = this.removeTask(state, markdownTask.id);
-    const task: TaskItem = {
-      ...existing,
-      id: markdownTask.id,
-      title: markdownTask.title,
-      detail: markdownTask.detail,
-      source: markdownTask.source,
-      meta: markdownTask.meta,
-      priority: markdownTask.priority,
-      object: markdownTask.object,
-      linkedNotePath: markdownTask.linkedNotePath ?? existing?.linkedNotePath,
-    };
-
-    if (markdownTask.location === "canvas") {
-      const previousCanvasCard = state.canvasCards.find(
-        (card) => card.id === markdownTask.id,
-      );
-      const tone = ["sage", "cream", "lavender", "blue"].includes(
-        markdownTask.tone ?? "",
-      )
-        ? markdownTask.tone
-        : previousCanvasCard?.tone ?? "sage";
-
-      return {
-        ...withoutTask,
-        canvasCards: [
-          ...withoutTask.canvasCards,
-          {
-            ...task,
-            x: markdownTask.x ?? previousCanvasCard?.x ?? 180,
-            y: markdownTask.y ?? previousCanvasCard?.y ?? 160,
-            tone: tone as WorkspaceState["canvasCards"][number]["tone"],
-            done: markdownTask.done ?? previousCanvasCard?.done,
-          },
-        ],
-      };
-    }
-
-    if (markdownTask.location === "inbox") {
-      return { ...withoutTask, inbox: [...withoutTask.inbox, task] };
-    }
-    if (markdownTask.location === "todo") {
-      return { ...withoutTask, todo: [...withoutTask.todo, task] };
-    }
-    if (markdownTask.location === "cache") {
-      return { ...withoutTask, cache: [...withoutTask.cache, task] };
-    }
-
-    const columnId =
-      markdownTask.columnId &&
-      withoutTask.storeColumns.some((column) => column.id === markdownTask.columnId)
-        ? markdownTask.columnId
-        : withoutTask.storeColumns[0]?.id;
-    if (!columnId) return { ...withoutTask, inbox: [...withoutTask.inbox, task] };
-
-    return {
-      ...withoutTask,
-      storeColumns: withoutTask.storeColumns.map((column) =>
-        column.id === columnId
-          ? { ...column, tasks: [...column.tasks, task] }
-          : column,
-      ),
-    };
-  }
-
-  private upsertMarkdownLongTermObject(
-    state: WorkspaceState,
-    markdownObject: LongTermObject,
-  ): WorkspaceState {
-    return {
-      ...clone(state),
-      longTermObjects: [
-        ...(state.longTermObjects ?? []).filter(
-          (object) => object.id !== markdownObject.id,
-        ),
-        markdownObject,
-      ],
-    };
-  }
 
   private async activateView(reveal = true): Promise<void> {
     try {
