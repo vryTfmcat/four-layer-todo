@@ -1583,10 +1583,18 @@ input:focus-visible {
 }
 
 @media (max-width: 700px) {
-  .four-layer-todo-root {
+  .four-layer-todo-root,
+  .four-layer-todo-mount {
     height: auto;
     min-height: 100%;
     overflow: visible;
+  }
+
+  .app-shell {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+    touch-action: pan-y;
   }
 
   .topbar {
@@ -1715,7 +1723,10 @@ input:focus-visible {
   }
 
   .storage-layout {
+    height: auto;
+    min-height: 0;
     display: block;
+    overflow: visible;
   }
 
   .storage-sidebar {
