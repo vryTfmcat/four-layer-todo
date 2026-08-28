@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.13 - 2026-08-28
+
+- Restore vertical touch scrolling on Android and other narrow mobile layouts
+  by giving the Obsidian view a dedicated mobile scroll path.
+- Let the workbench, task storage, and long-term object pages grow naturally on
+  mobile while preserving desktop column scrolling and whiteboard dragging.
+- Add a regression guard for the mobile overflow and touch-action rules.
+
 ## 0.1.12 - 2026-08-22
 
 - Preserve user-arranged workspace leaf placement by letting Obsidian manage

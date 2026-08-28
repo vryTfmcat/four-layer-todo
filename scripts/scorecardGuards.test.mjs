@@ -24,6 +24,24 @@ test("task cards cap long titles and details", () => {
   }
 });
 
+test("mobile layouts keep a vertical touch scroll path", () => {
+  for (const css of [sourceCss, releaseCss]) {
+    const mobileStart = css.indexOf("@media (max-width: 700px)");
+    const nextMedia = css.indexOf("\n@media", mobileStart + 1);
+    const mobileCss = css.slice(mobileStart, nextMedia < 0 ? undefined : nextMedia);
+    assert.ok(mobileStart >= 0, "mobile breakpoint must exist");
+    assert.match(mobileCss, /\.app-shell\s*\{[^}]*height:\s*auto/s);
+    assert.match(mobileCss, /\.app-shell\s*\{[^}]*overflow:\s*visible/s);
+    assert.match(mobileCss, /\.app-shell\s*\{[^}]*touch-action:\s*pan-y/s);
+    assert.match(mobileCss, /\.storage-layout\s*\{[^}]*height:\s*auto/s);
+  }
+
+  assert.match(
+    releaseCss,
+    /\.workspace-leaf-content\[data-type="four-layer-todo-workspace"\] \.view-content\s*\{[^}]*overflow-y:\s*auto/s,
+  );
+});
+
 test("deprecated and unused compatibility code stays removed", () => {
   assert.doesNotMatch(pluginSource, /\bdisplay\(\): void/);
   assert.doesNotMatch(pluginSource, /detachLeavesOfType/);
