@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.14 - 2026-10-16
+
+- Parse user-edited task frontmatter with Obsidian's YAML parser, including BOM-prefixed notes.
+- Measure whiteboard cards for accurate connection anchors and consistent native Canvas dimensions.
+- Coalesce dragging to animation frames and save layout when dragging finishes.
+- Mark unavailable AI controls as disabled instead of showing placeholder actions.
+- Add geometry and parsing regression coverage; support Node 22 and 24 test runners.
+
 ## 0.1.13 - 2026-08-28
 
 - Restore vertical touch scrolling on Android and other narrow mobile layouts

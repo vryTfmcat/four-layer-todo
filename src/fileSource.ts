@@ -1,3 +1,5 @@
+import { CANVAS_CARD_WIDTH, CANVAS_CARD_HEIGHT } from "./ui/canvasGeometry.ts";
+
 export type FileTaskLocation = "canvas" | "inbox" | "todo" | "cache" | "storage";
 export type FileTaskPriority = "P2" | "P3" | "P4" | "P5";
 
@@ -52,10 +54,25 @@ function stripGeneratedLinkedNoteBacklinks(value: string): string {
   return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-export function parseSimpleFrontmatter(content: string): Record<string, unknown> | null {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+export type FrontmatterParser = (yaml: string) => unknown;
+
+/** Standalone fallback supports flat JSON scalars and plain strings only.
+ * The plugin supplies Obsidian's YAML parser for user-edited frontmatter.
+ * Invalid YAML is rejected instead of silently treated as flat metadata.
+ */
+export function parseSimpleFrontmatter(content: string, parser?: FrontmatterParser): Record<string, unknown> | null {
+  const match = content.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
   if (!match) return null;
 
+  if (parser) {
+    try {
+      const result = parser(match[1]);
+      return result && typeof result === "object" && !Array.isArray(result)
+        ? result as Record<string, unknown> : null;
+    } catch {
+      return null;
+    }
+  }
   const values: Record<string, unknown> = {};
   for (const line of match[1].split(/\r?\n/)) {
     const entry = line.match(/^([A-Za-z][A-Za-z0-9_-]*):\s*(.*)$/);
@@ -114,14 +131,15 @@ export function parseFileTask(
   content: string,
   fileTitle: string,
   filePath?: string,
+  parser?: FrontmatterParser,
 ): FileTaskData | null {
-  const frontmatter = parseSimpleFrontmatter(content);
+  const frontmatter = parseSimpleFrontmatter(content, parser);
   if (!frontmatter || frontmatter.fourLayerTodo !== true) return null;
 
   const id = frontmatterString(frontmatter.id);
   if (!id) return null;
 
-  const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
+  const body = content.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
   const legacyHeading = body.match(/^#\s+(.+?)(?:\r?\n|$)/);
   const parsedDetail =
     legacyHeading?.[1].trim() === fileTitle
@@ -168,8 +186,9 @@ export function serializeFileTaskPool(metadata: FileTaskPoolMetadata): string {
 export function parseFileTaskPool(
   content: string,
   defaults: Omit<FileTaskPoolMetadata, "sortKey">,
+  parser?: FrontmatterParser,
 ): FileTaskPoolMetadata | null {
-  const frontmatter = parseSimpleFrontmatter(content);
+  const frontmatter = parseSimpleFrontmatter(content, parser);
   if (!frontmatter || frontmatter.fourLayerTodoPool !== true) return null;
   return {
     hint: frontmatterString(frontmatter.hint) ?? defaults.hint,
@@ -240,8 +259,8 @@ export function resolveCanvasTaskLayout(
   layouts: ReadonlyMap<string, { x: number; y: number; tone: string }>,
 ): { x: number; y: number; tone: string } {
   return layouts.get(taskId) ?? {
-    x: 40 + (index % 3) * 280,
-    y: 100 + Math.floor(index / 3) * 190,
+    x: 40 + (index % 3) * (CANVAS_CARD_WIDTH + 30),
+    y: 100 + Math.floor(index / 3) * (CANVAS_CARD_HEIGHT + 30),
     tone: "cream",
   };
 }

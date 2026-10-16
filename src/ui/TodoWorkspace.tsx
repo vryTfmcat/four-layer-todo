@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { CANVAS_CARD_WIDTH, CANVAS_CARD_HEIGHT, getConnectionCoordinates } from "./canvasGeometry";
 import {
   useEffect,
   useMemo,
@@ -136,8 +137,8 @@ export type WorkspaceStorage = {
 };
 
 const poolTones = ["green", "amber", "blue", "violet"];
-const CANVAS_CARD_WIDTH = 250;
-const CANVAS_CARD_HEIGHT = 280;
+
+
 const CANVAS_TEXT_NOTE_WIDTH = 220;
 const CANVAS_TEXT_NOTE_HEIGHT = 220;
 const CANVAS_CARD_GAP = 22;
@@ -283,30 +284,6 @@ function destinationLabel(destination: MoveDestination) {
   return tr("任务存储器");
 }
 
-function getConnectionCoordinates(from: CanvasCard, to: CanvasCard) {
-  const cardWidth =
-    typeof window !== "undefined" && window.matchMedia("(max-width: 700px)").matches
-      ? 210
-      : 250;
-  const cardHeight = 142;
-  const fromCenterX = from.x + cardWidth / 2;
-  const fromCenterY = from.y + cardHeight / 2;
-  const toCenterX = to.x + cardWidth / 2;
-  const toCenterY = to.y + cardHeight / 2;
-  const deltaX = toCenterX - fromCenterX;
-  const deltaY = toCenterY - fromCenterY;
-  const distance = Math.hypot(deltaX, deltaY);
-
-  if (!distance) return null;
-
-  const edgeFactor = 1 / Math.max(Math.abs(deltaX) / (cardWidth / 2), Math.abs(deltaY) / (cardHeight / 2));
-  return {
-    x1: fromCenterX + deltaX * edgeFactor,
-    y1: fromCenterY + deltaY * edgeFactor,
-    x2: toCenterX - deltaX * edgeFactor,
-    y2: toCenterY - deltaY * edgeFactor,
-  };
-}
 
 export function TodoWorkspace(
   {
@@ -388,6 +365,51 @@ export function TodoWorkspace(
     offsetY: number;
   } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const [cardSizes, setCardSizes] = useState<Record<string, { width: number; height: number }>>({});
+  const dragFrameRef = useRef<number | null>(null);
+  const pendingDragRef = useRef<(() => void) | null>(null);
+  const flushDrag = () => {
+    if (dragFrameRef.current !== null) cancelAnimationFrame(dragFrameRef.current);
+    dragFrameRef.current = null;
+    const update = pendingDragRef.current;
+    pendingDragRef.current = null;
+    update?.();
+  };
+  const finishDrag = () => { flushDrag(); setDragging(null); };
+  useEffect(() => () => {
+    if (dragFrameRef.current !== null) cancelAnimationFrame(dragFrameRef.current);
+  }, []);
+
+  const canvasCardIds = canvasCards.map((card) => card.id).join("\0");
+  useEffect(() => {
+    const board = canvasRef.current;
+    if (!board) return;
+    const measure = () => {
+      const sizes: Record<string, { width: number; height: number }> = {};
+      board.querySelectorAll<HTMLElement>("[data-canvas-card-id]").forEach((element) => {
+        sizes[element.dataset.canvasCardId!] = { width: element.offsetWidth, height: element.offsetHeight };
+      });
+      setCardSizes((previous) => JSON.stringify(previous) === JSON.stringify(sizes) ? previous : sizes);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    board.querySelectorAll<HTMLElement>("[data-canvas-card-id]").forEach((element) => observer.observe(element));
+    observer.observe(board);
+    return () => observer.disconnect();
+  }, [canvasCardIds, mode, flipped, hydrated]);
+
+  const connectionCoordinates = useMemo(() => {
+    const cards = new Map(canvasCards.map((card) => [card.id, card]));
+    return new Map(canvasConnections.map((connection) => {
+      const from = cards.get(connection.fromId);
+      const to = cards.get(connection.toId);
+      const fromSize = from && cardSizes[from.id];
+      const toSize = to && cardSizes[to.id];
+      return [connection.id, from && to && fromSize && toSize
+        ? getConnectionCoordinates({ ...from, ...fromSize }, { ...to, ...toSize }) : null];
+    }));
+  }, [canvasCards, canvasConnections, cardSizes]);
+
   const normalizedCanvasLayoutRef = useRef(false);
   const movingTaskIdsRef = useRef(new Set<string>());
 
@@ -511,7 +533,7 @@ export function TodoWorkspace(
   }, [storage]);
 
   useEffect(() => {
-    if (!hydrated || !storage?.updateCanvasLayout) return;
+    if (!hydrated || dragging || !storage?.updateCanvasLayout) return;
     const timeout = window.setTimeout(() => {
       void storage.updateCanvasLayout?.({
         canvasCards,
@@ -520,7 +542,7 @@ export function TodoWorkspace(
       });
     }, 120);
     return () => window.clearTimeout(timeout);
-  }, [canvasCards, canvasConnections, canvasTextNotes, hydrated, storage]);
+  }, [canvasCards, canvasConnections, canvasTextNotes, hydrated, storage, dragging]);
 
   useEffect(() => {
     if (normalizedCanvasLayoutRef.current || !hydrated) return;
@@ -1410,30 +1432,27 @@ export function TodoWorkspace(
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLElement>) => {
     if (!dragging) return;
-    const board = canvasRef.current?.getBoundingClientRect();
-    if (!board) return;
-    const item = event.currentTarget.getBoundingClientRect();
-    const nextX = Math.max(
-      CANVAS_SAFE_PADDING,
-      Math.min(board.width - item.width - CANVAS_SAFE_PADDING, event.clientX - board.left - dragging.offsetX),
-    );
-    const nextY = Math.max(
-      CANVAS_TOP_SAFE_AREA,
-      Math.min(board.height - item.height - CANVAS_SAFE_PADDING, event.clientY - board.top - dragging.offsetY),
-    );
-    if (dragging.kind === "card") {
-      setCanvasCards((cards) =>
-        cards.map((card) =>
-          card.id === dragging.id ? { ...card, x: nextX, y: nextY } : card,
-        ),
-      );
-    } else {
-      setCanvasTextNotes((notes) =>
-        notes.map((note) =>
-          note.id === dragging.id ? { ...note, x: nextX, y: nextY } : note,
-        ),
-      );
-    }
+    const activeDrag = dragging;
+    const element = event.currentTarget;
+    const clientX = event.clientX;
+    const clientY = event.clientY;
+    pendingDragRef.current = () => {
+      const board = canvasRef.current?.getBoundingClientRect();
+      if (!board || !element.isConnected) return;
+      const item = element.getBoundingClientRect();
+      const nextX = Math.max(CANVAS_SAFE_PADDING,
+        Math.min(board.width - item.width - CANVAS_SAFE_PADDING, clientX - board.left - activeDrag.offsetX));
+      const nextY = Math.max(CANVAS_TOP_SAFE_AREA,
+        Math.min(board.height - item.height - CANVAS_SAFE_PADDING, clientY - board.top - activeDrag.offsetY));
+      if (activeDrag.kind === "card") {
+        setCanvasCards((cards) => cards.map((card) =>
+          card.id === activeDrag.id ? { ...card, x: nextX, y: nextY } : card));
+      } else {
+        setCanvasTextNotes((notes) => notes.map((note) =>
+          note.id === activeDrag.id ? { ...note, x: nextX, y: nextY } : note));
+      }
+    };
+    if (dragFrameRef.current === null) dragFrameRef.current = requestAnimationFrame(flushDrag);
   };
 
   const handleStoreDrop = (columnId: string, taskId: string) => {
@@ -2166,10 +2185,7 @@ export function TodoWorkspace(
                   </marker>
                 </defs>
                 {canvasConnections.map((connection) => {
-                  const from = canvasCards.find((card) => card.id === connection.fromId);
-                  const to = canvasCards.find((card) => card.id === connection.toId);
-                  const coordinates =
-                    from && to ? getConnectionCoordinates(from, to) : null;
+                  const coordinates = connectionCoordinates.get(connection.id);
 
                   if (!coordinates) return null;
 
@@ -2221,10 +2237,7 @@ export function TodoWorkspace(
               </svg>
               {canvasConnections.map((connection) => {
                 if (deleteConnectionId !== connection.id) return null;
-                const from = canvasCards.find((card) => card.id === connection.fromId);
-                const to = canvasCards.find((card) => card.id === connection.toId);
-                const coordinates =
-                  from && to ? getConnectionCoordinates(from, to) : null;
+                const coordinates = connectionCoordinates.get(connection.id);
                 if (!coordinates) return null;
 
                 return (
@@ -2260,10 +2273,13 @@ export function TodoWorkspace(
                     connectionStartId === card.id ? "connection-source" : ""
                   } ${canvasTool === "connect" ? "connect-mode" : ""}`}
                   key={card.id}
+                  data-canvas-card-id={card.id}
                   style={{ left: card.x, top: card.y }}
                   onPointerDown={(event) => handlePointerDown(event, card)}
                   onPointerMove={handlePointerMove}
-                  onPointerUp={() => setDragging(null)}
+                  onPointerUp={finishDrag}
+                  onPointerCancel={finishDrag}
+                  onLostPointerCapture={finishDrag}
                 >
                   <TaskMenu
                     task={card}
@@ -2323,7 +2339,9 @@ export function TodoWorkspace(
                   style={{ left: note.x, top: note.y }}
                   onPointerDown={(event) => handleTextNotePointerDown(event, note)}
                   onPointerMove={handlePointerMove}
-                  onPointerUp={() => setDragging(null)}
+                  onPointerUp={finishDrag}
+                  onPointerCancel={finishDrag}
+                  onLostPointerCapture={finishDrag}
                   onDoubleClick={(event) => {
                     event.stopPropagation();
                     editTextNote(note);
@@ -2417,8 +2435,8 @@ export function TodoWorkspace(
                 subtitle={tr("先接住，还没有判断")}
                 items={inbox}
                 tone="inbox"
-                aiLabel={tr("整理收集箱")}
-                onAi={() => showToast(tr("AI 接口已预留：整理收集箱"))}
+
+
                 origin={{ kind: "inbox" }}
                 isMoveTarget={pendingMove?.destination === "workbench"}
                 moveDisabled={movingTaskId === pendingMove?.task.id}
@@ -2436,8 +2454,8 @@ export function TodoWorkspace(
                 subtitle={tr("想找时间开始的事情")}
                 items={todo}
                 tone="todo"
-                aiLabel={tr("提取待办列表")}
-                onAi={() => showToast(tr("AI 接口已预留：提取待办列表"))}
+
+
                 origin={{ kind: "todo" }}
                 isMoveTarget={pendingMove?.destination === "workbench"}
                 moveDisabled={movingTaskId === pendingMove?.task.id}
@@ -2455,8 +2473,8 @@ export function TodoWorkspace(
                 subtitle={tr("做过一部分，等待恢复")}
                 items={cache}
                 tone="cache"
-                aiLabel={tr("清理缓存列表")}
-                onAi={() => showToast(tr("AI 接口已预留：清理缓存列表"))}
+
+
                 origin={{ kind: "cache" }}
                 isMoveTarget={pendingMove?.destination === "workbench"}
                 moveDisabled={movingTaskId === pendingMove?.task.id}
@@ -2652,8 +2670,6 @@ function WorkbenchColumn({
   subtitle,
   items,
   tone,
-  aiLabel,
-  onAi,
   origin,
   isMoveTarget,
   moveDisabled,
@@ -2670,8 +2686,6 @@ function WorkbenchColumn({
   subtitle: string;
   items: TaskItem[];
   tone: string;
-  aiLabel: string;
-  onAi: () => void;
   origin: TaskOrigin;
   isMoveTarget: boolean;
   moveDisabled: boolean;
@@ -2738,9 +2752,9 @@ function WorkbenchColumn({
           </span>
           <p>{subtitle}</p>
         </div>
-        <button className="ai-button" onClick={onAi}>
+        <button className="ai-button" disabled title={tr("AI 尚未开放")}>
           <span>✦</span>
-          {aiLabel}
+          {tr("AI 尚未开放")}
           <small>AI</small>
         </button>
       </header>

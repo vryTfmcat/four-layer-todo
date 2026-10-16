@@ -26,10 +26,8 @@ test("task cards cap long titles and details", () => {
 
 test("mobile layouts keep a vertical touch scroll path", () => {
   for (const css of [sourceCss, releaseCss]) {
-    const mobileStart = css.indexOf("@media (max-width: 700px)");
-    const nextMedia = css.indexOf("\n@media", mobileStart + 1);
-    const mobileCss = css.slice(mobileStart, nextMedia < 0 ? undefined : nextMedia);
-    assert.ok(mobileStart >= 0, "mobile breakpoint must exist");
+    const mobileCss = css.match(/@media \(max-width: 700px\) \{([\s\S]*?)\n\}/)?.[1];
+    assert.ok(mobileCss, "mobile breakpoint must exist");
     assert.match(mobileCss, /\.app-shell\s*\{[^}]*height:\s*auto/s);
     assert.match(mobileCss, /\.app-shell\s*\{[^}]*overflow:\s*visible/s);
     assert.match(mobileCss, /\.app-shell\s*\{[^}]*touch-action:\s*pan-y/s);
