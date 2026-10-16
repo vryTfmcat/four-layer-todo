@@ -9,12 +9,14 @@ import {
   type WorkspaceState,
   type WorkspaceStorage,
 } from "./ui/TodoWorkspace";
+import { CANVAS_CARD_WIDTH, CANVAS_CARD_HEIGHT } from "./ui/canvasGeometry";
 import todoIconDataUrl from "../assets/todo-icon.png";
 import {
   getLanguage,
   ItemView,
   Notice,
   normalizePath,
+  parseYaml,
   Plugin,
   PluginSettingTab,
   type SettingDefinitionItem,
@@ -40,9 +42,9 @@ import {
   frontmatterNumber as getNumber,
   frontmatterString as getString,
   getFileTaskPlacement as getTaskLocationFromPath,
-  parseFileTask as parseTaskNote,
+  parseFileTask,
   parseFileTaskPool,
-  parseSimpleFrontmatter as parseFrontmatter,
+  parseSimpleFrontmatter,
   resolveCanvasTaskLayout,
   selectNumericShadowCanonicalPath,
   serializeFileTask,
@@ -610,7 +612,7 @@ function parseLongTermObjectNote(
   const defaultTone =
     kind === "兴趣" ? "mint" : kind === "目标" ? "peach" : "lilac";
   const description = content
-    .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
+    .replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
     .trim();
 
   return {
@@ -624,11 +626,19 @@ function parseLongTermObjectNote(
   };
 }
 
+function parseFrontmatter(content: string) {
+  return parseSimpleFrontmatter(content, parseYaml);
+}
+
+function parseTaskNote(content: string, fileTitle: string, filePath?: string) {
+  return parseFileTask(content, fileTitle, filePath, parseYaml);
+}
+
 function parseTaskPoolMetadata(content: string): TaskPoolMetadata | null {
   return parseFileTaskPool(content, {
     hint: tr("从 Markdown 任务池同步"),
     tone: "green",
-  });
+  }, parseYaml);
 }
 
 function taskFileStem(title: string): string {
@@ -1980,8 +1990,8 @@ export default class FourLayerTodoPlugin extends Plugin {
         file: taskPath,
         x: card.x,
         y: card.y,
-        width: 250,
-        height: 142,
+        width: CANVAS_CARD_WIDTH,
+        height: CANVAS_CARD_HEIGHT,
         color: nativeCanvasColor(card.tone),
       });
       nodeIds.add(card.id);

@@ -116,5 +116,24 @@ test("same-directory numeric Sync shadows have one deterministic canonical path"
 test("missing Canvas nodes get deterministic fallback layout", () => {
   const layouts = new Map([["present", { x: 9, y: 8, tone: "sage" }]]);
   assert.deepEqual(resolveCanvasTaskLayout("present", 0, layouts), { x: 9, y: 8, tone: "sage" });
-  assert.deepEqual(resolveCanvasTaskLayout("missing", 4, layouts), { x: 320, y: 290, tone: "cream" });
+  assert.deepEqual(resolveCanvasTaskLayout("missing", 4, layouts), { x: 320, y: 410, tone: "cream" });
+});
+
+test('user YAML is delegated intact to the host parser, including BOM and nested fields', () => {
+  const content = '\uFEFF---\nfourLayerTodo: true # managed\nid: \'abc\'\ntags:\n  - a\ndesc: |\n  第一行\n  第二行\norder: 42\n---\n正文';
+  let received;
+  const task = parseFileTask(content, '标题', undefined, (yaml) => {
+    received = yaml;
+    return { fourLayerTodo: true, id: 'abc', tags: ['a'], desc: '第一行\n第二行\n', order: 42 };
+  });
+  assert.match(received, /tags:\n  - a/);
+  assert.match(received, /desc: \|/);
+  assert.equal(task.id, 'abc');
+  assert.equal(task.sortKey, 42);
+  assert.equal(task.detail, '正文');
+});
+test('invalid YAML and non-mapping frontmatter are rejected without fallback', () => {
+  const content = '---\nfourLayerTodo: true\nid: abc\n---\n正文';
+  assert.equal(parseFileTask(content, '标题', undefined, () => { throw new Error('invalid YAML'); }), null);
+  assert.equal(parseFileTask(content, '标题', undefined, () => ['abc']), null);
 });

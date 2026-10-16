@@ -40,6 +40,7 @@ const ENGLISH: Record<string, string> = {
   "该任务有重复 ID，只能打开 Markdown；请手工解决冲突后再编辑或移动。": "This task has a duplicate ID. You can only open its Markdown until the conflict is resolved manually.",
   "打开只读冲突 Markdown": "Open read-only conflicting Markdown",
 
+  "AI 尚未开放": "AI coming soon",
   "创建待办": "Create task",
   "链接笔记": "Link note",
   "白板": "Whiteboard",
