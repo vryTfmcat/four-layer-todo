@@ -414,6 +414,8 @@ export function TodoWorkspace(
   const movingTaskIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
+    // A viewport resize must not rewrite the persisted native Canvas layout.
+    if (storage?.updateCanvasLayout) return;
     const board = canvasRef.current;
     if (!board || typeof ResizeObserver === "undefined") return;
 
@@ -460,7 +462,7 @@ export function TodoWorkspace(
     observer.observe(board);
     keepItemsInBounds();
     return () => observer.disconnect();
-  }, []);
+  }, [storage]);
 
   useEffect(() => {
     let active = true;
@@ -545,6 +547,7 @@ export function TodoWorkspace(
   }, [canvasCards, canvasConnections, canvasTextNotes, hydrated, storage, dragging]);
 
   useEffect(() => {
+    if (storage?.updateCanvasLayout) return;
     if (normalizedCanvasLayoutRef.current || !hydrated) return;
     const board = canvasRef.current?.getBoundingClientRect();
     if (
@@ -561,7 +564,7 @@ export function TodoWorkspace(
       canvasTextNotes,
       { width: board.width, height: board.height },
     ));
-  }, [canvasTextNotes, hydrated]);
+  }, [canvasTextNotes, hydrated, storage]);
 
   useEffect(() => {
     const closeMenu = () => setOpenMenuId(null);

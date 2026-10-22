@@ -1283,7 +1283,11 @@ export default class FourLayerTodoPlugin extends Plugin {
     }
   }
 
-  async refreshFileIndex(emit = true, ensureStructure = true): Promise<void> {
+  async refreshFileIndex(
+    emit = true,
+    ensureStructure = true,
+    canvasRename?: { id: string; oldPath: string; newPath: string },
+  ): Promise<void> {
     if (ensureStructure) await this.ensureFileSourceStructure();
     const rootFolder = normalizeTaskFolder(this.settings.taskNotesFolder);
     const groups = await this.scanActiveTaskGroups(rootFolder);
@@ -1409,6 +1413,15 @@ export default class FourLayerTodoPlugin extends Plugin {
       if (record.location !== "canvas") continue;
       const path = this.taskPaths.get(record.task.id);
       if (path) whiteboardPathToTaskId.set(path, record.task.id);
+    }
+    // Vault.rename need not update Canvas links before this refresh. Accept the
+    // old path only for this rename, and only while its task is still active.
+    if (
+      canvasRename &&
+      whiteboardPathToTaskId.get(canvasRename.newPath) === canvasRename.id &&
+      !this.app.vault.getAbstractFileByPath(canvasRename.oldPath)
+    ) {
+      whiteboardPathToTaskId.set(canvasRename.oldPath, canvasRename.id);
     }
     const canvasPath = `${rootFolder}/白板/${NATIVE_CANVAS_FILE_NAME}`;
     const canvasLayout = await this.readCanvasLayoutFromFile(canvasPath, whiteboardPathToTaskId);
@@ -1698,7 +1711,9 @@ export default class FourLayerTodoPlugin extends Plugin {
         if (moved instanceof TFile) file = moved;
       }
       await this.app.vault.modify(file, serializeTaskNote(task, metadata));
-      await this.refreshFileIndex();
+      await this.refreshFileIndex(true, true, oldPath !== file.path
+        ? { id: task.id, oldPath, newPath: file.path }
+        : undefined);
       if (file.path.startsWith(`${normalizeTaskFolder(this.settings.taskNotesFolder)}/白板/`)) {
         await this.syncNativeCanvasAfterTaskCommit();
       }
