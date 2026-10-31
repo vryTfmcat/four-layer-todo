@@ -2,6 +2,7 @@ export type AppLocale = "zh" | "en";
 export type LanguageSetting = "auto" | AppLocale;
 
 const ENGLISH: Record<string, string> = {
+  "示例卡片": "Example card",
   "四层待办": "Four Layer Todo",
   "打开四层待办": "Open Four Layer Todo",
   "四层待办打开失败": "Failed to open Four Layer Todo",

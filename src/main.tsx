@@ -199,7 +199,7 @@ function createGuidedSampleWorkspace(): WorkspaceState {
     meta?: string,
   ): TaskItem => ({
     id,
-    title,
+    title: `${tr("示例卡片")} · ${tr(title)}`,
     detail,
     source,
     priority,

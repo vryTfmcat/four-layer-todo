@@ -6,5 +6,5 @@
   "description": "A whiteboard-centered workspace for managing attention across workbenches, task storage, and long-term objects.",
   "author": "vryTfmcat",
   "authorUrl": "https://github.com/vryTfmcat",
-  "isDesktopOnly": false
+  "isDesktopOnly": true
 }
