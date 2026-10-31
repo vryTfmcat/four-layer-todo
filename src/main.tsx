@@ -825,6 +825,22 @@ class FourLayerTodoSettingTab extends PluginSettingTab {
       },
         {
           type: "group",
+          heading: this.plugin.t("在线体验"),
+          items: [{
+            name: this.plugin.t("无需下载，先体验四层理念"),
+            desc: this.plugin.t("打开公开交互演示。示例数据仅保存在浏览器；不会连接当前 Vault。"),
+            render: (setting) => {
+              setting.addButton((button) => button
+                .setButtonText(this.plugin.t("打开在线演示"))
+                .onClick(() => {
+                  const language = this.plugin.locale === "en" ? "en" : "zh";
+                  window.open(`https://four-layer-todo.vrytfmcat.chatgpt.site/?lang=${language}`, "_blank", "noopener,noreferrer");
+                }));
+            },
+          }],
+        },
+        {
+          type: "group",
           heading: this.plugin.t("反馈与建议"),
           items: [
             {
