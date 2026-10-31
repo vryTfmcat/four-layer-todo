@@ -392,10 +392,18 @@ export function TodoWorkspace(
       setCardSizes((previous) => JSON.stringify(previous) === JSON.stringify(sizes) ? previous : sizes);
     };
     measure();
-    const observer = new ResizeObserver(measure);
+    const view = board.ownerDocument.defaultView ?? window;
+    let measureFrame = 0;
+    const observer = new ResizeObserver(() => {
+      view.cancelAnimationFrame(measureFrame);
+      measureFrame = view.requestAnimationFrame(measure);
+    });
     board.querySelectorAll<HTMLElement>("[data-canvas-card-id]").forEach((element) => observer.observe(element));
     observer.observe(board);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      view.cancelAnimationFrame(measureFrame);
+    };
   }, [canvasCardIds, mode, flipped, hydrated]);
 
   const connectionCoordinates = useMemo(() => {
@@ -2136,6 +2144,10 @@ export function TodoWorkspace(
             <div
               className={`whiteboard ${canvasTool === "text" ? "text-note-mode" : ""}`}
               ref={canvasRef}
+              style={{
+                minWidth: Math.max(0, ...canvasCards.map((card) => card.x + (cardSizes[card.id]?.width ?? CANVAS_CARD_WIDTH) + 32), ...canvasTextNotes.map((note) => note.x + CANVAS_TEXT_NOTE_WIDTH + 32)),
+                minHeight: Math.max(0, ...canvasCards.map((card) => card.y + (cardSizes[card.id]?.height ?? CANVAS_CARD_HEIGHT) + 100), ...canvasTextNotes.map((note) => note.y + CANVAS_TEXT_NOTE_HEIGHT + 100)),
+              }}
               onPointerDown={handleWhiteboardPointerDown}
             >
               <div

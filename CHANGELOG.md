@@ -1,3 +1,10 @@
+## 0.1.15 — 2026-10-31
+
+- Restrict the plugin to desktop and identify onboarding tasks as example cards.
+- Keep workbench columns readable in narrow plugin panes and allow scrolling to off-screen whiteboard cards without rewriting Canvas coordinates.
+- Exclude task-pool metadata and archived tasks from note-link suggestions.
+- Add bilingual problem-report and suggestion buttons in Settings, prefilling only version information.
+
 # Changelog
 
 ## 0.1.14 - 2026-10-16

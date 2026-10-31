@@ -2,6 +2,11 @@ export type AppLocale = "zh" | "en";
 export type LanguageSetting = "auto" | AppLocale;
 
 const ENGLISH: Record<string, string> = {
+  "反馈与建议": "Feedback and suggestions",
+  "帮助改进四层待办": "Help improve Four Layer Todo",
+  "报告问题": "Report a problem",
+  "提出建议": "Suggest an improvement",
+  "在 GitHub 报告问题或提出建议。仅预填插件版本和 Obsidian 版本，请勿提交私人笔记或敏感信息。": "Report a problem or suggest an improvement on GitHub. Only plugin and Obsidian versions are prefilled. Do not include private notes or sensitive information.",
   "示例卡片": "Example card",
   "四层待办": "Four Layer Todo",
   "打开四层待办": "Open Four Layer Todo",

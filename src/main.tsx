@@ -13,6 +13,7 @@ import { CANVAS_CARD_WIDTH, CANVAS_CARD_HEIGHT } from "./ui/canvasGeometry";
 import todoIconDataUrl from "../assets/todo-icon.png";
 import {
   getLanguage,
+  apiVersion,
   ItemView,
   Notice,
   normalizePath,
@@ -822,8 +823,37 @@ class FourLayerTodoSettingTab extends PluginSettingTab {
           },
         ],
       },
-    ];
-  }
+        {
+          type: "group",
+          heading: this.plugin.t("反馈与建议"),
+          items: [
+            {
+              name: this.plugin.t("帮助改进四层待办"),
+              desc: this.plugin.t("在 GitHub 报告问题或提出建议。仅预填插件版本和 Obsidian 版本，请勿提交私人笔记或敏感信息。"),
+              render: (setting) => {
+                const feedbackUrl = (kind: "bug" | "idea") => {
+                  const body = [
+                    "Plugin version: " + this.plugin.manifest.version,
+                    "Obsidian version: " + apiVersion,
+                    "Desktop OS: ", "",
+                    kind === "bug" ? "Steps to reproduce:\n1.\n\nExpected behavior:\n\nActual behavior:" : "What would help your workflow?\n\nWhat do you do today?",
+                  ].join("\n");
+                  return "https://github.com/vryTfmcat/four-layer-todo/issues/new?" + new URLSearchParams({
+                    title: kind === "bug" ? "[Bug] " : "[Suggestion] ", body,
+                  }).toString();
+                };
+                setting.addButton((button) => button
+                  .setButtonText(this.plugin.t("报告问题"))
+                  .onClick(() => { window.open(feedbackUrl("bug"), "_blank", "noopener,noreferrer"); }));
+                setting.addButton((button) => button
+                  .setButtonText(this.plugin.t("提出建议"))
+                  .onClick(() => { window.open(feedbackUrl("idea"), "_blank", "noopener,noreferrer"); }));
+              },
+            },
+          ],
+        },
+      ];
+    }
 
   getControlValue(key: string): unknown {
     if (key === "language") return this.plugin.settings.language;
@@ -1930,6 +1960,7 @@ export default class FourLayerTodoPlugin extends Plugin {
     const files = this.app.vault
       .getMarkdownFiles()
       .filter((file) => {
+        if (file.name === POOL_METADATA_FILE_NAME || this.isArchivedMarkdownPath(file.path)) return false;
         if (!normalizedQuery) return this.isMovableTaskFolderNotePath(file.path);
         return `${file.basename} ${file.path}`
           .toLocaleLowerCase()

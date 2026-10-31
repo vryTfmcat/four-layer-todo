@@ -1776,3 +1776,17 @@
     transition-duration: 0.01ms;
   }
 }
+
+/* Desktop plugin pane layout: keep all cards reachable without changing coordinates. */
+.four-layer-todo-plugin .app-shell { container-type: inline-size; container-name: todo-pane; }
+.four-layer-todo-plugin .workspace-front { overflow: auto; }
+.four-layer-todo-plugin .workbench-main { grid-template-columns: repeat(3, minmax(260px, 1fr)); overflow-x: auto; }
+.four-layer-todo-plugin .workbench-column > header { flex-wrap: wrap; }
+.four-layer-todo-plugin .column-title-line h2 { white-space: nowrap; }
+@container todo-pane (max-width: 900px) {
+  .four-layer-todo-plugin .attention-path { display: none; }
+  .four-layer-todo-plugin .workbench-column { padding: 16px; }
+  .four-layer-todo-plugin .workbench-column > header { flex-direction: column; gap: 8px; }
+  .four-layer-todo-plugin .storage-preview { grid-template-columns: 1fr; gap: 10px; padding: 14px 18px; overflow-y: auto; }
+  .four-layer-todo-plugin .preview-pools { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
