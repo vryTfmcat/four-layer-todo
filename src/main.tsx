@@ -834,7 +834,7 @@ class FourLayerTodoSettingTab extends PluginSettingTab {
                 .setButtonText(this.plugin.t("打开在线演示"))
                 .onClick(() => {
                   const language = this.plugin.locale === "en" ? "en" : "zh";
-                  window.open(`https://four-layer-todo.vrytfmcat.chatgpt.site/?lang=${language}`, "_blank", "noopener,noreferrer");
+                  window.open(`https://four-layer-todo-demo.netlify.app/?lang=${language}`, "_blank", "noopener,noreferrer");
                 }));
             },
           }],

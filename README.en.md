@@ -8,7 +8,7 @@ workbench, task pools, and long-term objects.
 
 ## Try It Without Installing
 
-[Open the interactive demo in English](https://four-layer-todo.vrytfmcat.chatgpt.site/?lang=en) · [中文演示](https://four-layer-todo.vrytfmcat.chatgpt.site/?lang=zh)
+[Open the interactive demo in English](https://four-layer-todo-demo.netlify.app/?lang=en) · [中文演示](https://four-layer-todo-demo.netlify.app/?lang=zh)
 
 Explore the whiteboard, workbench, task pools, and long-term objects in your browser before downloading the plugin. Switch between English and Chinese from the top of the page or the first-use guide. Sample data stays in your browser; the demo does not connect to an Obsidian vault. It is a concept prototype with some placeholder controls, so its features may differ from the desktop plugin.
 

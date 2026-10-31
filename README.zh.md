@@ -14,7 +14,7 @@ Obsidian 主工作区打开完整页面，不使用狭窄侧栏。
 
 ## 无需下载，先在线体验
 
-[打开中文交互演示](https://four-layer-todo.vrytfmcat.chatgpt.site/?lang=zh) · [English demo](https://four-layer-todo.vrytfmcat.chatgpt.site/?lang=en)
+[打开中文交互演示](https://four-layer-todo-demo.netlify.app/?lang=zh) · [English demo](https://four-layer-todo-demo.netlify.app/?lang=en)
 
 先在浏览器里探索白板、缓存工作台、任务池和长期对象，再决定是否安装插件。页面顶部和首次体验引导中都可切换中英文。示例数据只保存在当前浏览器，不会连接或修改 Obsidian 库；这是理念原型，部分操作仍是占位，功能与桌面插件并不完全相同。
 
