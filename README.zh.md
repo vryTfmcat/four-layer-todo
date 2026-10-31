@@ -12,6 +12,14 @@ network service.
 中文名为“四层待办”。这是四层待办工具的首个本地插件版本。插件会在
 Obsidian 主工作区打开完整页面，不使用狭窄侧栏。
 
+## 无需下载，先在线体验
+
+[打开中文交互演示](https://four-layer-todo-demo.netlify.app/?lang=zh) · [English demo](https://four-layer-todo-demo.netlify.app/?lang=en)
+
+先在浏览器里探索白板、缓存工作台、任务池和长期对象，再决定是否安装插件。页面顶部和首次体验引导中都可切换中英文。示例数据只保存在当前浏览器，不会连接或修改 Obsidian 库；这是理念原型，部分操作仍是占位，功能与桌面插件并不完全相同。
+
+已安装插件的用户可以从 **设置 → Four Layer Todo → 在线体验** 再次打开演示。
+
 ## 演示视频
 
 [播放带中文字幕的四层待办演示](发布素材/演示视频/Four-Layer-Todo-Demo-Subtitled.mp4)

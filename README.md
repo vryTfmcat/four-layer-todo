@@ -6,6 +6,14 @@ Four-Layer Todo is a local-first task workspace for Obsidian. It keeps the
 current task in a whiteboard while moving less immediate work through a
 workbench, task pools, and long-term objects.
 
+## Try It Without Installing
+
+[Open the interactive demo in English](https://four-layer-todo-demo.netlify.app/?lang=en) · [中文演示](https://four-layer-todo-demo.netlify.app/?lang=zh)
+
+Explore the whiteboard, workbench, task pools, and long-term objects in your browser before downloading the plugin. Switch between English and Chinese from the top of the page or the first-use guide. Sample data stays in your browser; the demo does not connect to an Obsidian vault. It is a concept prototype with some placeholder controls, so its features may differ from the desktop plugin.
+
+In the plugin, open **Settings → Four Layer Todo → Interactive demo** to revisit it.
+
 ## Demo Video
 
 [Watch the subtitled Four Layer Todo demo](发布素材/演示视频/Four-Layer-Todo-Demo-Subtitled.mp4)

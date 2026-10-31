@@ -1,3 +1,8 @@
+## 0.1.16 — 2026-11-01
+
+- Add a language-aware interactive demo link in Settings.
+- Introduce the no-download concept demo in the English and Chinese README files.
+
 ## 0.1.15 — 2026-10-31
 
 - Restrict the plugin to desktop and identify onboarding tasks as example cards.

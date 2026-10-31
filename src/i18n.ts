@@ -2,6 +2,10 @@ export type AppLocale = "zh" | "en";
 export type LanguageSetting = "auto" | AppLocale;
 
 const ENGLISH: Record<string, string> = {
+  "在线体验": "Interactive demo",
+  "无需下载，先体验四层理念": "Explore the four-layer workflow without installing",
+  "打开公开交互演示。示例数据仅保存在浏览器；不会连接当前 Vault。": "Open the public interactive demo. Sample data stays in your browser; the demo does not connect to this vault.",
+  "打开在线演示": "Open interactive demo",
   "反馈与建议": "Feedback and suggestions",
   "帮助改进四层待办": "Help improve Four Layer Todo",
   "报告问题": "Report a problem",
